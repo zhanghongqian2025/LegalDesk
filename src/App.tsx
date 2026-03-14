@@ -153,8 +153,8 @@ function App() {
         {currentPage === 'upload' && (
           <div className="flex-1 overflow-auto p-8">
             <div className="max-w-3xl mx-auto">
-              <h1 className="text-2xl font-semibold mb-2">上传案件材料</h1>
-              <p className="text-gray-500 mb-8">上传法律文件，AI 将自动分析并整理案件信息</p>
+              <h1 className="text-2xl font-semibold mb-2">添加案件文件</h1>
+              <p className="text-gray-500 mb-8">添加本地文件引用，AI 将自动分析并整理案件信息</p>
 
               {/* Upload zone */}
               <div 
@@ -164,8 +164,8 @@ function App() {
                 {uploadedFiles.length === 0 ? (
                   <>
                     <Upload size={48} className="mx-auto mb-4 text-gray-400" />
-                    <p className="text-lg font-medium text-gray-700 mb-2">点击或拖拽文件到此处上传</p>
-                    <p className="text-gray-500">支持 PDF、Word、图片等格式</p>
+                    <p className="text-lg font-medium text-gray-700 mb-2">点击或拖拽文件到此处添加</p>
+                    <p className="text-gray-500">支持 PDF、Word、图片等格式（仅保存文件引用，不复制文件）</p>
                   </>
                 ) : (
                   <div className="space-y-3">

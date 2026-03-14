@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store';
 import { DOCUMENT_CATEGORY_LABELS, type CreateCaseInput } from '../types';
-import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send, X, Upload } from 'lucide-react';
+import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send, X, Upload, ExternalLink } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { open as openPath } from '@tauri-apps/plugin-shell';
 
 type TabType = 'documents' | 'legal' | 'evidence' | 'ai';
 
@@ -88,6 +89,14 @@ export function CaseDetail() {
         const ext = filename.split('.').pop()?.toLowerCase() || '';
         await addDocument(selectedCaseId, 'evidence', filename, f, ext, 0);
       }
+    }
+  };
+
+  const handleOpenFile = async (filepath: string) => {
+    try {
+      await openPath(filepath);
+    } catch (e) {
+      alert('无法打开文件，请检查文件是否存在');
     }
   };
 
@@ -219,19 +228,19 @@ export function CaseDetail() {
           <div>
             <div className="flex justify-between items-center mb-6">
               <div>
-                <h2 className="text-lg font-semibold">卷宗材料</h2>
-                <p className="text-gray-500 text-sm mt-1">管理案件相关的文件材料</p>
+                <h2 className="text-lg font-semibold">卷宗文件</h2>
+                <p className="text-gray-500 text-sm mt-1">管理案件相关的本地文件（仅保存引用）</p>
               </div>
               <button onClick={handleAddFile} className="btn btn-primary">
-                <Upload size={18} /> 上传文件
+                <Upload size={18} /> 添加文件
               </button>
             </div>
             
             {documents.length === 0 ? (
               <div className="empty-state card p-12">
                 <FolderOpen size={56} />
-                <p className="text-gray-500 text-lg mt-4">暂无卷宗材料</p>
-                <p className="text-gray-400 text-sm mt-1">点击"上传文件"添加案件材料</p>
+                <p className="text-gray-500 text-lg mt-4">暂无文件</p>
+                <p className="text-gray-400 text-sm mt-1">点击"添加文件"关联本地文件（仅保存引用）</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -240,10 +249,20 @@ export function CaseDetail() {
                     <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center">
                       <FileText size={20} className="text-blue-500" />
                     </div>
-                    <div className="flex-1">
+                    <div 
+                      className="flex-1 cursor-pointer"
+                      onClick={() => handleOpenFile(doc.filepath)}
+                    >
                       <p className="font-medium text-gray-900">{doc.filename}</p>
                       <p className="text-sm text-gray-500">{DOCUMENT_CATEGORY_LABELS[doc.category as keyof typeof DOCUMENT_CATEGORY_LABELS]}</p>
                     </div>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleOpenFile(doc.filepath); }}
+                      className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                      title="打开文件"
+                    >
+                      <ExternalLink size={18} />
+                    </button>
                     <button onClick={() => deleteDocument(doc.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
                       <Trash2 size={18} />
                     </button>
