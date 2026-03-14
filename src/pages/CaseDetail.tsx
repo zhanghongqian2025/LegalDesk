@@ -5,6 +5,7 @@ import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send,
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openPath } from '@tauri-apps/plugin-shell';
+import { DocumentWizard } from '../components/DocumentWizard';
 
 type TabType = 'documents' | 'legal' | 'evidence' | 'ai';
 
@@ -35,6 +36,7 @@ export function CaseDetail() {
   });
 
   const [showDocForm, setShowDocForm] = useState(false);
+  const [showDocWizard, setShowDocWizard] = useState(false);
   const [docForm, setDocForm] = useState({ title: '', docType: '', content: '' });
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
 
@@ -281,7 +283,7 @@ export function CaseDetail() {
                 <h2 className="text-lg font-semibold">法律文书</h2>
                 <p className="text-gray-500 text-sm mt-1">创建和管理案件相关法律文书</p>
               </div>
-              <button onClick={() => { setShowDocForm(true); setEditingDocId(null); setDocForm({ title: '', docType: '', content: '' }); }} className="btn btn-primary">
+              <button onClick={() => setShowDocWizard(true)} className="btn btn-primary">
                 <Plus size={18} /> 新建文书
               </button>
             </div>
@@ -571,6 +573,17 @@ export function CaseDetail() {
           </div>
         )}
       </div>
+
+      {/* Document Wizard Modal */}
+      {showDocWizard && selectedCaseId && (
+        <DocumentWizard
+          caseId={selectedCaseId}
+          onClose={() => setShowDocWizard(false)}
+          onSaved={() => {
+            // Refresh documents
+          }}
+        />
+      )}
     </div>
   );
 }
