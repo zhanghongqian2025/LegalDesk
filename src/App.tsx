@@ -39,7 +39,7 @@ function App() {
   const handleUpload = async () => {
     const files = await open({
       multiple: true,
-      filters: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png'] }]
+      filters: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'jpg', 'jpeg', 'png'] }]
     });
     
     if (files) {

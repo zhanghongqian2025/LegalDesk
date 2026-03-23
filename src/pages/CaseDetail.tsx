@@ -81,7 +81,7 @@ export function CaseDetail() {
     
     const file = await open({
       multiple: true,
-      filters: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png'] }]
+      filters: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'jpg', 'jpeg', 'png'] }]
     });
 
     if (file) {

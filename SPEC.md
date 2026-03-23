@@ -16,7 +16,7 @@
 - 案件搜索与过滤
 
 ### 2.2 卷宗整理
-- 支持格式：PDF、Word(.doc/.docx)、图片(.jpg/.png/.jpeg)、文本(.txt)
+- 支持格式：PDF、Word(.doc/.docx)、Excel(.xlsx)、PPT(.pptx)、Markdown(.md)、图片(.jpg/.png/.jpeg)、文本(.txt)
 - 文件夹式管理：证据材料、法律文书、庭审记录、往来函件
 - 文件标签与备注
 - 全文搜索（基于文件内容）
