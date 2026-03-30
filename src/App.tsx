@@ -3,10 +3,11 @@ import { useAppStore } from './store';
 import { CaseList } from './pages/CaseList';
 import { CaseDetail } from './pages/CaseDetail';
 import { TemplatePage } from './pages/TemplatePage';
-import { Scale, Briefcase, FileText, Settings, Upload, X, File, ArrowRight, Sparkles } from 'lucide-react';
+import { Dashboard } from './pages/Dashboard';
+import { Scale, Briefcase, FileText, Settings, Upload, X, File, ArrowRight, Sparkles, LayoutDashboard } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 
-type Page = 'upload' | 'cases' | 'templates' | 'settings';
+type Page = 'dashboard' | 'upload' | 'cases' | 'templates' | 'settings';
 
 interface UploadedFile {
   name: string;
@@ -24,7 +25,7 @@ interface CaseSuggestion {
 }
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('upload');
+  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const { selectedCaseId, fetchCases, createCase } = useAppStore();
   
   // Upload state
@@ -108,6 +109,13 @@ function App() {
         <nav className="flex-1 p-4">
           <div className="space-y-1">
             <button
+              onClick={() => setCurrentPage('dashboard')}
+              className={`sidebar-item w-full ${currentPage === 'dashboard' ? 'active' : ''}`}
+            >
+              <LayoutDashboard size={18} />
+              工作台
+            </button>
+            <button
               onClick={() => setCurrentPage('upload')}
               className={`sidebar-item w-full ${currentPage === 'upload' ? 'active' : ''}`}
             >
@@ -149,6 +157,9 @@ function App() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         
+        {/* Dashboard Page */}
+        {currentPage === 'dashboard' && <Dashboard />}
+
         {/* Upload Page */}
         {currentPage === 'upload' && (
           <div className="flex-1 overflow-auto p-8">
