@@ -24,6 +24,12 @@ interface CaseSuggestion {
   description: string;
 }
 
+interface AiConfig {
+  apiKey: string;
+  apiUrl: string;
+  model: string;
+}
+
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const { selectedCaseId, fetchCases, createCase } = useAppStore();
@@ -32,6 +38,23 @@ function App() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<CaseSuggestion | null>(null);
+  
+  // AI Settings
+  const [aiConfig, setAiConfig] = useState<AiConfig>({
+    apiKey: localStorage.getItem('ai_api_key') || '',
+    apiUrl: localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1',
+    model: localStorage.getItem('ai_model') || 'gpt-4o-mini',
+  });
+  const [configSaved, setConfigSaved] = useState(false);
+  
+  // Save AI config
+  const handleSaveAiConfig = () => {
+    localStorage.setItem('ai_api_key', aiConfig.apiKey);
+    localStorage.setItem('ai_api_url', aiConfig.apiUrl);
+    localStorage.setItem('ai_model', aiConfig.model);
+    setConfigSaved(true);
+    setTimeout(() => setConfigSaved(false), 2000);
+  };
 
   useEffect(() => {
     fetchCases();
@@ -272,6 +295,8 @@ function App() {
                     <input
                       type="password"
                       placeholder="请输入 API Key"
+                      value={aiConfig.apiKey}
+                      onChange={(e) => setAiConfig({ ...aiConfig, apiKey: e.target.value })}
                       className="input"
                     />
                   </div>
@@ -280,12 +305,31 @@ function App() {
                     <input
                       type="text"
                       placeholder="https://api.openai.com/v1"
+                      value={aiConfig.apiUrl}
+                      onChange={(e) => setAiConfig({ ...aiConfig, apiUrl: e.target.value })}
                       className="input"
                     />
                   </div>
-                  <button className="btn btn-primary">
-                    保存配置
-                  </button>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-gray-700">模型</label>
+                    <select
+                      value={aiConfig.model}
+                      onChange={(e) => setAiConfig({ ...aiConfig, model: e.target.value })}
+                      className="input"
+                    >
+                      <option value="gpt-4o-mini">GPT-4o Mini</option>
+                      <option value="gpt-4o">GPT-4o</option>
+                      <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                      <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                      <option value="claude-3-haiku">Claude 3 Haiku</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={handleSaveAiConfig} className="btn btn-primary">
+                      保存配置
+                    </button>
+                    {configSaved && <span className="text-green-600 text-sm">配置已保存</span>}
+                  </div>
                 </div>
               </div>
 

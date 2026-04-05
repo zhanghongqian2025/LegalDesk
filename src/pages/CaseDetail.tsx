@@ -3,7 +3,6 @@ import { useAppStore } from '../store';
 import { DOCUMENT_CATEGORY_LABELS, type CreateCaseInput } from '../types';
 import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send, X, Upload, ExternalLink } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
 import { open as openPath } from '@tauri-apps/plugin-shell';
 import { DocumentWizard } from '../components/DocumentWizard';
 
@@ -143,11 +142,55 @@ export function CaseDetail() {
     const docInfo = legalDocuments.length > 0 ? `\n📄 法律文书：${legalDocuments.length}份` : '';
     const evidenceInfo = evidence.length > 0 ? `\n🔍 证据材料：${evidence.length}份` : '';
 
-    try {
-      await invoke<string>('get_app_data_dir');
-      addAiMessage('assistant', `收到你的问题：${userMsg}\n\n当前案件：${caseInfo}${docInfo}${evidenceInfo}\n\n我可以帮你：\n📝 起草法律文书\n🔍 分析证据三性\n⚖️ 法律咨询\n\n请告诉我具体需求？`);
-    } catch {
-      addAiMessage('assistant', `收到你的问题：${userMsg}\n\n请问有什么可以帮助你的？`);
+    // Build context
+    const context = `当前案件信息：${caseInfo}${docInfo}${evidenceInfo}`;
+    
+    // Check if AI is configured
+    const apiKey = localStorage.getItem('ai_api_key');
+    const apiUrl = localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1';
+    const model = localStorage.getItem('ai_model') || 'gpt-4o-mini';
+
+    if (apiKey) {
+      try {
+        const systemPrompt = `你是一位专业的法律AI助手，帮助律师和法务人员处理案件。你的职责包括：
+1. 起草法律文书（起诉状、答辩状、代理词等）
+2. 分析证据的三性（真实性、合法性、关联性）
+3. 提供法律咨询和建议
+4. 整理和归纳案件材料
+
+请用专业、严谨的语气回答问题。如果涉及具体法律建议，请注明仅供参考。`;
+
+        const response = await fetch(`${apiUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: `${context}\n\n用户问题：${userMsg}` },
+            ],
+            max_tokens: 2000,
+            temperature: 0.7,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const assistantMsg = data.choices?.[0]?.message?.content || '抱歉，AI 暂时无法回答这个问题。';
+        addAiMessage('assistant', assistantMsg);
+      } catch (error) {
+        console.error('AI API error:', error);
+        addAiMessage('assistant', `抱歉，AI 服务调用失败：${error instanceof Error ? error.message : '未知错误'}。请检查设置中的 API 配置是否正确。`);
+      }
+    } else {
+      // Fallback when no API key
+      addAiMessage('assistant', `收到你的问题：${userMsg}\n\n当前案件：${caseInfo}${docInfo}${evidenceInfo}\n\n我可以帮你：\n📝 起草法律文书\n🔍 分析证据三性\n⚖️ 法律咨询\n\n请告诉我具体需求？\n\n💡 提示：在设置中配置 API Key 后，我将能够提供更准确的法律建议。`);
     }
     setAiLoading(false);
   };
