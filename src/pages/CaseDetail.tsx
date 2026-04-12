@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store';
 import { DOCUMENT_CATEGORY_LABELS, type CreateCaseInput } from '../types';
-import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send, X, Upload, ExternalLink } from 'lucide-react';
+import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send, X, Upload, ExternalLink, Sparkles } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { open as openPath } from '@tauri-apps/plugin-shell';
 import { DocumentWizard } from '../components/DocumentWizard';
@@ -46,6 +46,7 @@ export function CaseDetail() {
 
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [analyzingEvidence, setAnalyzingEvidence] = useState(false);
 
   const selectedCase = cases.find((c) => c.id === selectedCaseId);
 
@@ -129,6 +130,80 @@ export function CaseDetail() {
     );
     setShowEvidenceForm(false);
     setEvidenceForm({ name: '', evidenceType: '', authenticity: '', legality: '', relevance: '', analysis: '' });
+  };
+
+  const handleAiAnalyzeEvidence = async () => {
+    if (!evidenceForm.name.trim() || analyzingEvidence) return;
+    setAnalyzingEvidence(true);
+    
+    const apiKey = localStorage.getItem('ai_api_key');
+    const apiUrl = localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1';
+    const model = localStorage.getItem('ai_model') || 'gpt-4o-mini';
+    const caseInfo = selectedCase ? `${selectedCase.title}${selectedCase.case_number ? `（${selectedCase.case_number}）` : ''}` : '';
+
+    if (apiKey) {
+      try {
+        const systemPrompt = `你是一位专业的法律证据分析AI助手。请根据证据名称，分析其三性（真实性、合法性、关联性）。
+请以JSON格式返回分析结果：
+{
+  "evidenceType": "物证/书证/证人证言/间接证据"（根据名称推断）,
+  "authenticity": "verified/unverified/disputed"（真实性：已核实/未核实/有争议）,
+  "legality": "legal/illegal/questionable"（合法性：合法/非法/存疑）,
+  "relevance": "relevant/irrelevant/questionable"（关联性：有关联/无关联/存疑）,
+  "analysis": "简要分析说明（50字以内）"
+}
+只返回JSON，不要有其他文字。`;
+
+        const response = await fetch(`${apiUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: `案件：${caseInfo}\n证据名称：${evidenceForm.name}` },
+            ],
+            max_tokens: 500,
+            temperature: 0.3,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const raw = data.choices?.[0]?.message?.content || '';
+          const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            const typeMap: Record<string, string> = {
+              '物证': 'physical', '书证': 'documentary', '证人证言': 'testimonial', '间接证据': 'circumstantial',
+            };
+            const authMap: Record<string, string> = {
+              '已核实': 'verified', '未核实': 'unverified', '有争议': 'disputed',
+            };
+            const legMap: Record<string, string> = {
+              '合法': 'legal', '非法': 'illegal', '存疑': 'questionable',
+            };
+            const relMap: Record<string, string> = {
+              '有关联': 'relevant', '无关联': 'irrelevant', '存疑': 'questionable',
+            };
+            setEvidenceForm(prev => ({
+              ...prev,
+              evidenceType: typeMap[parsed.evidenceType] || prev.evidenceType,
+              authenticity: authMap[parsed.authenticity] || prev.authenticity,
+              legality: legMap[parsed.legality] || prev.legality,
+              relevance: relMap[parsed.relevance] || prev.relevance,
+              analysis: parsed.analysis || prev.analysis,
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('AI evidence analysis error:', error);
+      }
+    }
+    setAnalyzingEvidence(false);
   };
 
   const handleAiSubmit = async () => {
@@ -498,6 +573,10 @@ export function CaseDetail() {
                     />
                   </div>
                   <div className="col-span-2 flex gap-3">
+                    <button onClick={handleAiAnalyzeEvidence} disabled={analyzingEvidence || !evidenceForm.name.trim()} className="btn btn-secondary flex items-center gap-2">
+                      <Sparkles size={16} />
+                      {analyzingEvidence ? 'AI 分析中...' : 'AI 分析'}
+                    </button>
                     <button onClick={handleSaveEvidence} className="btn btn-primary">保存</button>
                     <button onClick={() => setShowEvidenceForm(false)} className="btn btn-secondary">取消</button>
                   </div>

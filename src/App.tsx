@@ -75,19 +75,88 @@ function App() {
       }));
       setUploadedFiles(fileList);
       
-      // Auto analyze
+      // Auto analyze with AI
       setIsAnalyzing(true);
-      setTimeout(() => {
-        // Simulate AI analysis
+      setAiAnalysis(null);
+
+      const apiKey = localStorage.getItem('ai_api_key');
+      const apiUrl = localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1';
+      const model = localStorage.getItem('ai_model') || 'gpt-4o-mini';
+
+      const fileNames = fileList.map(f => f.name).join('、');
+      const fileTypes = fileList.map(f => f.type).join('、');
+
+      if (apiKey) {
+        try {
+          const systemPrompt = `你是一位专业的法律AI助手，负责分析用户上传的法律文件并提取案件信息。
+请根据文件列表，返回以下信息（JSON格式）：
+- title: 建议的案件名称
+- caseType: 案件类型（civil/criminal/administrative/arbitration/non_litigation）
+- court: 可能的法院名称（如有线索）
+- oppositeParty: 可能的对方当事人（如有线索）
+- description: 简要案件描述
+
+只返回JSON，不要有其他文字。`;
+
+          const response = await fetch(`${apiUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `文件列表：${fileNames}\n文件类型：${fileTypes}\n请分析这些文件，提取案件信息。` },
+              ],
+              max_tokens: 1000,
+              temperature: 0.3,
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const raw = data.choices?.[0]?.message?.content || '';
+            // Try to parse JSON from response
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              setAiAnalysis({
+                title: parsed.title || fileList[0]?.name.replace(/\.[^/.]+$/, '') || '新案件',
+                caseType: parsed.caseType || 'civil',
+                court: parsed.court || '',
+                oppositeParty: parsed.oppositeParty || '',
+                description: parsed.description || `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`,
+              });
+            } else {
+              throw new Error('Invalid JSON response');
+            }
+          } else {
+            throw new Error(`API error: ${response.status}`);
+          }
+        } catch (error) {
+          console.error('AI analysis error:', error);
+          // Fallback
+          setAiAnalysis({
+            title: fileList[0]?.name.replace(/\.[^/.]+$/, '') || '新案件',
+            caseType: 'civil',
+            court: '',
+            oppositeParty: '',
+            description: `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`,
+          });
+        }
+      } else {
+        // No API key - use simple analysis
         setAiAnalysis({
           title: fileList[0]?.name.replace(/\.[^/.]+$/, '') || '新案件',
           caseType: 'civil',
           court: '',
           oppositeParty: '',
-          description: `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`
+          description: `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`,
         });
-        setIsAnalyzing(false);
-      }, 2000);
+      }
+      setIsAnalyzing(false);
     }
   };
 

@@ -231,6 +231,25 @@ export function CaseList() {
                     className="input"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-700">截止日期</label>
+                  <input
+                    type="date"
+                    value={formData.deadline || ''}
+                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                    className="input"
+                  />
+                </div>
+                <div className="col-span-3">
+                  <label className="block text-sm font-medium mb-2 text-gray-700">案件标签</label>
+                  <input
+                    type="text"
+                    value={formData.tags || ''}
+                    onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                    className="input"
+                    placeholder="用逗号分隔，例如：合同纠纷,建筑工程,重点案件"
+                  />
+                </div>
                 <div className="col-span-3">
                   <label className="block text-sm font-medium mb-2 text-gray-700">案件描述</label>
                   <textarea
