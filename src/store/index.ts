@@ -28,6 +28,7 @@ interface AppState {
   
   fetchDocuments: (caseId: string) => Promise<void>;
   addDocument: (caseId: string, category: string, filename: string, filepath: string, fileType?: string, fileSize?: number) => Promise<Document>;
+  importFileToCase: (caseId: string, sourcePath: string, category: string) => Promise<Document>;
   deleteDocument: (id: string) => Promise<void>;
   
   fetchLegalDocuments: (caseId: string) => Promise<void>;
@@ -114,6 +115,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   addDocument: async (caseId: string, category: string, filename: string, filepath: string, fileType?: string, fileSize?: number) => {
     const doc = await invoke<Document>('add_document', {
       caseId, category, filename, filepath, fileType, fileSize,
+    });
+    set((state) => ({ documents: [doc, ...state.documents] }));
+    return doc;
+  },
+
+  importFileToCase: async (caseId: string, sourcePath: string, category: string) => {
+    // 调用后端命令，将文件复制到案件目录
+    const doc = await invoke<Document>('import_file_to_case', {
+      caseId, sourcePath, category,
     });
     set((state) => ({ documents: [doc, ...state.documents] }));
     return doc;

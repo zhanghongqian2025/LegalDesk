@@ -187,6 +187,25 @@ fn init_database(conn: &Connection) -> SqliteResult<()> {
     Ok(())
 }
 
+// 获取应用数据目录
+fn get_data_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("LegalDesk")
+}
+
+// 获取案件目录
+fn get_case_dir(case_id: &str) -> PathBuf {
+    get_data_dir().join("cases").join(case_id)
+}
+
+// 确保案件目录存在
+fn ensure_case_dir(case_id: &str) -> Result<PathBuf, String> {
+    let case_dir = get_case_dir(case_id);
+    fs::create_dir_all(&case_dir).map_err(|e| format!("创建案件目录失败: {}", e))?;
+    Ok(case_dir)
+}
+
 // 案件管理命令
 #[tauri::command]
 fn get_cases(db: State<DbState>) -> Result<Vec<Case>, String> {
@@ -260,6 +279,11 @@ fn create_case(db: State<DbState>, input: CreateCaseInput) -> Result<Case, Strin
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
+    // 创建案件目录
+    drop(conn);
+    ensure_case_dir(&id)?;
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
     conn.execute(
         "INSERT INTO cases (id, title, case_number, case_type, status, court, opposite_party, handler, filing_date, court_date, deadline, description, tags, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -328,7 +352,6 @@ fn update_case(db: State<DbState>, id: String, input: CreateCaseInput) -> Result
     )
     .map_err(|e| e.to_string())?;
 
-    // 获取创建时间
     let created_at: String = conn
         .query_row("SELECT created_at FROM cases WHERE id = ?", [&id], |row| row.get(0))
         .map_err(|e| e.to_string())?;
@@ -355,6 +378,13 @@ fn update_case(db: State<DbState>, id: String, input: CreateCaseInput) -> Result
 #[tauri::command]
 fn delete_case(db: State<DbState>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    // 删除案件目录
+    let case_dir = get_case_dir(&id);
+    if case_dir.exists() {
+        let _ = fs::remove_dir_all(&case_dir);
+    }
+    
     conn.execute("DELETE FROM cases WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -388,6 +418,78 @@ fn get_documents(db: State<DbState>, case_id: String) -> Result<Vec<Document>, S
         .collect();
 
     Ok(docs)
+}
+
+/// 导入文件到案件目录（复制文件到应用数据目录）
+/// 解决原文件移动后链接失效的问题
+#[tauri::command]
+fn import_file_to_case(
+    db: State<DbState>,
+    case_id: String,
+    source_path: String,
+    category: String,
+) -> Result<Document, String> {
+    // 确保案件目录存在
+    ensure_case_dir(&case_id)?;
+    
+    // 验证源文件存在
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err(format!("源文件不存在: {}", source_path));
+    }
+    
+    // 获取文件名
+    let filename = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("无法获取文件名")?;
+    
+    // 生成唯一文件名（防止重名覆盖）
+    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+    let unique_filename = if ext.is_empty() {
+        format!("{}_{}", stem, &Uuid::new_v4().to_string()[..8])
+    } else {
+        format!("{}_{}.{}", stem, &Uuid::new_v4().to_string()[..8], ext)
+    };
+    
+    // 目标路径
+    let case_dir = get_case_dir(&case_id);
+    let dest_path = case_dir.join(&unique_filename);
+    
+    // 复制文件
+    fs::copy(&source, &dest_path).map_err(|e| format!("文件复制失败: {}", e))?;
+    
+    // 获取文件大小
+    let file_size = fs::metadata(&dest_path)
+        .map(|m| m.len() as i64)
+        .ok();
+    
+    // 获取文件扩展名
+    let file_type = if ext.is_empty() { None } else { Some(ext.to_lowercase()) };
+    
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO documents (id, case_id, category, filename, filepath, file_type, file_size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![&id, &case_id, &category, &filename, &dest_path.to_string_lossy().to_string(), &file_type, &file_size, &now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(Document {
+        id,
+        case_id,
+        category,
+        filename: filename.to_string(),
+        filepath: dest_path.to_string_lossy().to_string(),
+        file_type,
+        file_size,
+        tags: None,
+        notes: None,
+        created_at: now,
+    })
 }
 
 #[tauri::command]
@@ -427,6 +529,19 @@ fn add_document(
 #[tauri::command]
 fn delete_document(db: State<DbState>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    // 获取文件路径并删除文件
+    if let Ok(filepath) = conn.query_row(
+        "SELECT filepath FROM documents WHERE id = ?",
+        [&id],
+        |row| row.get::<_, String>(0),
+    ) {
+        let path = PathBuf::from(&filepath);
+        if path.exists() {
+            let _ = fs::remove_file(path);
+        }
+    }
+    
     conn.execute("DELETE FROM documents WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -474,7 +589,6 @@ fn save_legal_document(
     let now = Utc::now().to_rfc3339();
 
     if let Some(existing_id) = id {
-        // 更新现有文档
         conn.execute(
             "UPDATE legal_documents SET doc_type = ?, title = ?, content = ?, updated_at = ? WHERE id = ?",
             rusqlite::params![&doc_type, &title, &content, &now, &existing_id],
@@ -497,7 +611,6 @@ fn save_legal_document(
             updated_at: now,
         })
     } else {
-        // 创建新文档
         let new_id = Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO legal_documents (id, case_id, doc_type, title, content, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
@@ -732,12 +845,8 @@ fn delete_template(db: State<DbState>, id: String) -> Result<(), String> {
 // 获取应用数据目录
 #[tauri::command]
 fn get_app_data_dir() -> Result<String, String> {
-    let data_dir = dirs::data_dir()
-        .ok_or("Cannot find data directory")?
-        .join("LegalDesk");
-    
+    let data_dir = get_data_dir();
     fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    
     Ok(data_dir.to_string_lossy().to_string())
 }
 
@@ -747,10 +856,7 @@ pub fn run() {
     env_logger::init();
 
     // 获取数据目录
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("LegalDesk");
-    
+    let data_dir = get_data_dir();
     fs::create_dir_all(&data_dir).expect("Failed to create data directory");
 
     // 初始化数据库
@@ -788,6 +894,7 @@ pub fn run() {
             save_template,
             delete_template,
             get_app_data_dir,
+            import_file_to_case,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

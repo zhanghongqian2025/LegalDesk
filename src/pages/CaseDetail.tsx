@@ -11,7 +11,7 @@ type TabType = 'documents' | 'legal' | 'evidence' | 'ai';
 export function CaseDetail() {
   const {
     cases, selectedCaseId, documents, legalDocuments, evidence,
-    selectCase, updateCase, addDocument, deleteDocument,
+    selectCase, updateCase, importFileToCase, deleteDocument,
     saveLegalDocument, deleteLegalDocument,
     addEvidence, deleteEvidence,
     addAiMessage, aiMessages, clearAiMessages,
@@ -87,9 +87,7 @@ export function CaseDetail() {
     if (file) {
       const files = Array.isArray(file) ? file : [file];
       for (const f of files) {
-        const filename = f.split(/[/\\]/).pop() || 'unknown';
-        const ext = filename.split('.').pop()?.toLowerCase() || '';
-        await addDocument(selectedCaseId, 'evidence', filename, f, ext, 0);
+        await importFileToCase(selectedCaseId, f, 'evidence');
       }
     }
   };
