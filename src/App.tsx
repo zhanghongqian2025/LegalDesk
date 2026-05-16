@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from './store';
 import { CaseList } from './pages/CaseList';
 import { CaseDetail } from './pages/CaseDetail';
@@ -32,7 +33,9 @@ interface AiConfig {
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
-  const { selectedCaseId, fetchCases, createCase } = useAppStore();
+  const { selectedCaseId, fetchCases, createCase, fetchTemplates, selectCase } = useAppStore();
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const [dataIoMessage, setDataIoMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   
   // Upload state
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -180,6 +183,56 @@ function App() {
     setCurrentPage('cases');
     setUploadedFiles([]);
     setAiAnalysis(null);
+  };
+
+  const handleExportData = async () => {
+    try {
+      const json = await invoke<string>('export_app_data');
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      a.href = url;
+      a.download = `legaldesk-backup-${stamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDataIoMessage({ kind: 'success', text: '已导出为 JSON 文件' });
+      setTimeout(() => setDataIoMessage(null), 3000);
+    } catch (error) {
+      console.error('export_app_data:', error);
+      const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '导出失败';
+      setDataIoMessage({ kind: 'error', text });
+    }
+  };
+
+  const handleImportDataClick = () => {
+    if (
+      !window.confirm(
+        '导入将覆盖当前数据库中的全部案件、附件记录、法律文书、证据与模板。此操作不可撤销，是否继续？'
+      )
+    ) {
+      return;
+    }
+    importFileInputRef.current?.click();
+  };
+
+  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await invoke('import_app_data', { json: text });
+      await fetchCases();
+      await fetchTemplates();
+      selectCase(null);
+      setDataIoMessage({ kind: 'success', text: '数据已从备份恢复' });
+      setTimeout(() => setDataIoMessage(null), 3000);
+    } catch (error) {
+      console.error('import_app_data:', error);
+      const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '导入失败';
+      setDataIoMessage({ kind: 'error', text });
+    }
   };
 
   return (
@@ -404,9 +457,32 @@ function App() {
 
               <div className="card p-6 mb-6">
                 <h2 className="font-semibold mb-4">数据管理</h2>
-                <div className="flex gap-3">
-                  <button className="btn btn-secondary">导出数据</button>
-                  <button className="btn btn-secondary">导入数据</button>
+                <p className="text-sm text-gray-500 mb-4">
+                  导出或导入 LegalDesk 完整业务数据（案件、文档记录、法律文书、证据、模板）。备份为 JSON
+                  文本；导入会替换当前库中的上述内容；案件目录中已保存的文件会尽可能保留（与备份中案件 ID
+                  一致的目录）。
+                </p>
+                <input
+                  ref={importFileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={handleImportFile}
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  <button type="button" onClick={handleExportData} className="btn btn-secondary">
+                    导出数据
+                  </button>
+                  <button type="button" onClick={handleImportDataClick} className="btn btn-secondary">
+                    导入数据
+                  </button>
+                  {dataIoMessage && (
+                    <span
+                      className={`text-sm ${dataIoMessage.kind === 'success' ? 'text-green-600' : 'text-red-600'}`}
+                    >
+                      {dataIoMessage.text}
+                    </span>
+                  )}
                 </div>
               </div>
 

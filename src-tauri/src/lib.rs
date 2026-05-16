@@ -842,6 +842,316 @@ fn delete_template(db: State<DbState>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 应用数据备份格式（与前端导出 JSON 一致）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AppDataExport {
+    pub version: u32,
+    pub exported_at: String,
+    pub cases: Vec<Case>,
+    pub documents: Vec<Document>,
+    pub legal_documents: Vec<LegalDocument>,
+    pub evidence: Vec<Evidence>,
+    pub templates: Vec<Template>,
+}
+
+const APP_DATA_EXPORT_VERSION: u32 = 1;
+
+#[tauri::command]
+fn export_app_data(db: State<DbState>) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let cases: Vec<Case> = {
+        let mut stmt = conn
+            .prepare("SELECT * FROM cases ORDER BY updated_at DESC")
+            .map_err(|e| e.to_string())?;
+        stmt
+            .query_map([], |row| {
+                Ok(Case {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    case_number: row.get(2)?,
+                    case_type: row.get(3)?,
+                    status: row.get(4)?,
+                    court: row.get(5)?,
+                    opposite_party: row.get(6)?,
+                    handler: row.get(7)?,
+                    filing_date: row.get(8)?,
+                    court_date: row.get(9)?,
+                    deadline: row.get(10)?,
+                    description: row.get(11)?,
+                    tags: row.get(12)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let documents: Vec<Document> = {
+        let mut stmt = conn
+            .prepare("SELECT * FROM documents ORDER BY case_id, created_at")
+            .map_err(|e| e.to_string())?;
+        stmt
+            .query_map([], |row| {
+                Ok(Document {
+                    id: row.get(0)?,
+                    case_id: row.get(1)?,
+                    category: row.get(2)?,
+                    filename: row.get(3)?,
+                    filepath: row.get(4)?,
+                    file_type: row.get(5)?,
+                    file_size: row.get(6)?,
+                    tags: row.get(7)?,
+                    notes: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let legal_documents: Vec<LegalDocument> = {
+        let mut stmt = conn
+            .prepare("SELECT * FROM legal_documents ORDER BY case_id, updated_at DESC")
+            .map_err(|e| e.to_string())?;
+        stmt
+            .query_map([], |row| {
+                Ok(LegalDocument {
+                    id: row.get(0)?,
+                    case_id: row.get(1)?,
+                    doc_type: row.get(2)?,
+                    title: row.get(3)?,
+                    content: row.get(4)?,
+                    template_id: row.get(5)?,
+                    version: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let evidence: Vec<Evidence> = {
+        let mut stmt = conn
+            .prepare("SELECT * FROM evidence ORDER BY case_id, created_at DESC")
+            .map_err(|e| e.to_string())?;
+        stmt
+            .query_map([], |row| {
+                Ok(Evidence {
+                    id: row.get(0)?,
+                    case_id: row.get(1)?,
+                    doc_id: row.get(2)?,
+                    evidence_name: row.get(3)?,
+                    evidence_type: row.get(4)?,
+                    authenticity: row.get(5)?,
+                    legality: row.get(6)?,
+                    relevance: row.get(7)?,
+                    analysis: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let templates: Vec<Template> = {
+        let mut stmt = conn
+            .prepare("SELECT * FROM templates ORDER BY name")
+            .map_err(|e| e.to_string())?;
+        stmt
+            .query_map([], |row| {
+                Ok(Template {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    category: row.get(2)?,
+                    content: row.get(3)?,
+                    variables: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let payload = AppDataExport {
+        version: APP_DATA_EXPORT_VERSION,
+        exported_at: Utc::now().to_rfc3339(),
+        cases,
+        documents,
+        legal_documents,
+        evidence,
+        templates,
+    };
+
+    serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_app_data(db: State<DbState>, json: String) -> Result<(), String> {
+    let data: AppDataExport = serde_json::from_str(&json).map_err(|e| format!("JSON 解析失败: {}", e))?;
+
+    if data.version != APP_DATA_EXPORT_VERSION {
+        return Err(format!(
+            "不支持的备份版本: {}（当前支持 v{}）",
+            data.version, APP_DATA_EXPORT_VERSION
+        ));
+    }
+
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    let old_case_ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM cases")
+            .map_err(|e| e.to_string())?;
+        stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect()
+    };
+
+    let new_case_ids: std::collections::HashSet<String> =
+        data.cases.iter().map(|c| c.id.clone()).collect();
+
+    {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        tx.execute("DELETE FROM evidence", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM legal_documents", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM documents", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM cases", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM templates", [])
+            .map_err(|e| e.to_string())?;
+
+        for c in &data.cases {
+            tx.execute(
+                "INSERT INTO cases (id, title, case_number, case_type, status, court, opposite_party, handler, filing_date, court_date, deadline, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &c.id,
+                    &c.title,
+                    &c.case_number,
+                    &c.case_type,
+                    &c.status,
+                    &c.court,
+                    &c.opposite_party,
+                    &c.handler,
+                    &c.filing_date,
+                    &c.court_date,
+                    &c.deadline,
+                    &c.description,
+                    &c.tags,
+                    &c.created_at,
+                    &c.updated_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for t in &data.templates {
+            tx.execute(
+                "INSERT INTO templates (id, name, category, content, variables, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &t.id,
+                    &t.name,
+                    &t.category,
+                    &t.content,
+                    &t.variables,
+                    &t.created_at,
+                    &t.updated_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for d in &data.documents {
+            tx.execute(
+                "INSERT INTO documents (id, case_id, category, filename, filepath, file_type, file_size, tags, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &d.id,
+                    &d.case_id,
+                    &d.category,
+                    &d.filename,
+                    &d.filepath,
+                    &d.file_type,
+                    &d.file_size,
+                    &d.tags,
+                    &d.notes,
+                    &d.created_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for ld in &data.legal_documents {
+            tx.execute(
+                "INSERT INTO legal_documents (id, case_id, doc_type, title, content, template_id, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &ld.id,
+                    &ld.case_id,
+                    &ld.doc_type,
+                    &ld.title,
+                    &ld.content,
+                    &ld.template_id,
+                    &ld.version,
+                    &ld.created_at,
+                    &ld.updated_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for e in &data.evidence {
+            tx.execute(
+                "INSERT INTO evidence (id, case_id, doc_id, evidence_name, evidence_type, authenticity, legality, relevance, analysis, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &e.id,
+                    &e.case_id,
+                    &e.doc_id,
+                    &e.evidence_name,
+                    &e.evidence_type,
+                    &e.authenticity,
+                    &e.legality,
+                    &e.relevance,
+                    &e.analysis,
+                    &e.created_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+
+    drop(conn);
+
+    for old_id in old_case_ids {
+        if !new_case_ids.contains(&old_id) {
+            let case_dir = get_case_dir(&old_id);
+            if case_dir.exists() {
+                let _ = fs::remove_dir_all(&case_dir);
+            }
+        }
+    }
+
+    for c in &data.cases {
+        let _ = ensure_case_dir(&c.id);
+    }
+
+    Ok(())
+}
+
 // 获取应用数据目录
 #[tauri::command]
 fn get_app_data_dir() -> Result<String, String> {
@@ -895,6 +1205,8 @@ pub fn run() {
             delete_template,
             get_app_data_dir,
             import_file_to_case,
+            export_app_data,
+            import_app_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
