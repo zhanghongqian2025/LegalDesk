@@ -16,9 +16,6 @@ interface AppState {
   // 模板
   templates: Template[];
   
-  // AI 对话
-  aiMessages: { role: 'user' | 'assistant'; content: string }[];
-  
   // Actions
   fetchCases: () => Promise<void>;
   createCase: (input: CreateCaseInput) => Promise<Case>;
@@ -44,9 +41,6 @@ interface AppState {
   saveTemplate: (name: string, category: string | null, content: string, variables: string | null, id?: string) => Promise<Template>;
   deleteTemplate: (id: string) => Promise<void>;
   
-  // AI 对话
-  addAiMessage: (role: 'user' | 'assistant', content: string) => void;
-  clearAiMessages: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -57,7 +51,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   legalDocuments: [],
   evidence: [],
   templates: [],
-  aiMessages: [],
 
   fetchCases: async () => {
     set({ loading: true });
@@ -218,13 +211,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteTemplate: async (id: string) => {
     await invoke('delete_template', { id });
     set((state) => ({ templates: state.templates.filter((t) => t.id !== id) }));
-  },
-
-  addAiMessage: (role: 'user' | 'assistant', content: string) => {
-    set((state) => ({ aiMessages: [...state.aiMessages, { role, content }] }));
-  },
-
-  clearAiMessages: () => {
-    set({ aiMessages: [] });
   },
 }));

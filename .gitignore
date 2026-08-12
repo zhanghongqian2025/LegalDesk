@@ -11,6 +11,12 @@ node_modules
 dist
 dist-ssr
 *.local
+.git.bak/
+
+# Local Pi runtime state and credentials must never enter the repository.
+.pi/
+src-tauri/binaries/
+*.agent-session.jsonl
 
 # Editor directories and files
 .vscode/*

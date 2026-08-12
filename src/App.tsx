@@ -1,188 +1,112 @@
-import { useState, useEffect, useRef, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useAppStore } from './store';
-import { CaseList } from './pages/CaseList';
-import { CaseDetail } from './pages/CaseDetail';
-import { TemplatePage } from './pages/TemplatePage';
-import { Dashboard } from './pages/Dashboard';
-import { Scale, Briefcase, FileText, Settings, Upload, X, File, ArrowRight, Sparkles, LayoutDashboard } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import {
+  ArrowRight,
+  Bot,
+  Briefcase,
+  Database,
+  File,
+  FileText,
+  LayoutDashboard,
+  Scale,
+  Settings,
+  ShieldCheck,
+  Upload,
+  X,
+} from 'lucide-react';
+import { PiStatusCard } from './components/PiStatusCard';
+import { useAppStore } from './store';
+import { AgentCenter } from './pages/AgentCenter';
+import { CaseDetail } from './pages/CaseDetail';
+import { CaseList } from './pages/CaseList';
+import { Dashboard } from './pages/Dashboard';
+import { TemplatePage } from './pages/TemplatePage';
 
-type Page = 'dashboard' | 'upload' | 'cases' | 'templates' | 'settings';
+type Page = 'dashboard' | 'intake' | 'cases' | 'agents' | 'templates' | 'settings';
 
 interface UploadedFile {
   name: string;
   path: string;
-  size: number;
   type: string;
-}
-
-interface CaseSuggestion {
-  title: string;
-  caseType: string;
-  court: string;
-  oppositeParty: string;
-  description: string;
-}
-
-interface AiConfig {
-  apiKey: string;
-  apiUrl: string;
-  model: string;
 }
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
-  const { selectedCaseId, fetchCases, createCase, fetchTemplates, selectCase } = useAppStore();
+  const {
+    selectedCaseId,
+    fetchCases,
+    createCase,
+    fetchTemplates,
+    selectCase,
+    importFileToCase,
+  } = useAppStore();
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const [dataIoMessage, setDataIoMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  
-  // Upload state
+  const [intakeMessage, setIntakeMessage] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<CaseSuggestion | null>(null);
-  
-  // AI Settings
-  const [aiConfig, setAiConfig] = useState<AiConfig>({
-    apiKey: localStorage.getItem('ai_api_key') || '',
-    apiUrl: localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1',
-    model: localStorage.getItem('ai_model') || 'gpt-4o-mini',
-  });
-  const [configSaved, setConfigSaved] = useState(false);
-  
-  // Save AI config
-  const handleSaveAiConfig = () => {
-    localStorage.setItem('ai_api_key', aiConfig.apiKey);
-    localStorage.setItem('ai_api_url', aiConfig.apiUrl);
-    localStorage.setItem('ai_model', aiConfig.model);
-    setConfigSaved(true);
-    setTimeout(() => setConfigSaved(false), 2000);
-  };
+  const [matterTitle, setMatterTitle] = useState('');
+  const [matterType, setMatterType] = useState('non_litigation');
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
-    fetchCases();
+    void fetchCases();
   }, [fetchCases]);
 
-  const handleUpload = async () => {
+  const handlePickFiles = async () => {
     const files = await open({
       multiple: true,
-      filters: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'jpg', 'jpeg', 'png'] }]
+      filters: [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'jpg', 'jpeg', 'png'] }],
     });
-    
-    if (files) {
-      const fileList = (Array.isArray(files) ? files : [files]).map(f => ({
-        name: f.split(/[/\\]/).pop() || 'unknown',
-        path: f,
-        size: 0,
-        type: f.split('.').pop()?.toLowerCase() || ''
-      }));
-      setUploadedFiles(fileList);
-      
-      // Auto analyze with AI
-      setIsAnalyzing(true);
-      setAiAnalysis(null);
 
-      const apiKey = localStorage.getItem('ai_api_key');
-      const apiUrl = localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1';
-      const model = localStorage.getItem('ai_model') || 'gpt-4o-mini';
+    if (!files) return;
+    const additions = (Array.isArray(files) ? files : [files]).map((path) => ({
+      name: path.split(/[/\\]/).pop() || 'unknown',
+      path,
+      type: path.split('.').pop()?.toLowerCase() || '',
+    }));
 
-      const fileNames = fileList.map(f => f.name).join('、');
-      const fileTypes = fileList.map(f => f.type).join('、');
-
-      if (apiKey) {
-        try {
-          const systemPrompt = `你是一位专业的法律AI助手，负责分析用户上传的法律文件并提取案件信息。
-请根据文件列表，返回以下信息（JSON格式）：
-- title: 建议的案件名称
-- caseType: 案件类型（civil/criminal/administrative/arbitration/non_litigation）
-- court: 可能的法院名称（如有线索）
-- oppositeParty: 可能的对方当事人（如有线索）
-- description: 简要案件描述
-
-只返回JSON，不要有其他文字。`;
-
-          const response = await fetch(`${apiUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              model,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: `文件列表：${fileNames}\n文件类型：${fileTypes}\n请分析这些文件，提取案件信息。` },
-              ],
-              max_tokens: 1000,
-              temperature: 0.3,
-            }),
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            const raw = data.choices?.[0]?.message?.content || '';
-            // Try to parse JSON from response
-            const jsonMatch = raw.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]);
-              setAiAnalysis({
-                title: parsed.title || fileList[0]?.name.replace(/\.[^/.]+$/, '') || '新案件',
-                caseType: parsed.caseType || 'civil',
-                court: parsed.court || '',
-                oppositeParty: parsed.oppositeParty || '',
-                description: parsed.description || `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`,
-              });
-            } else {
-              throw new Error('Invalid JSON response');
-            }
-          } else {
-            throw new Error(`API error: ${response.status}`);
-          }
-        } catch (error) {
-          console.error('AI analysis error:', error);
-          // Fallback
-          setAiAnalysis({
-            title: fileList[0]?.name.replace(/\.[^/.]+$/, '') || '新案件',
-            caseType: 'civil',
-            court: '',
-            oppositeParty: '',
-            description: `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`,
-          });
-        }
-      } else {
-        // No API key - use simple analysis
-        setAiAnalysis({
-          title: fileList[0]?.name.replace(/\.[^/.]+$/, '') || '新案件',
-          caseType: 'civil',
-          court: '',
-          oppositeParty: '',
-          description: `根据上传的文件分析，案件涉及相关法律材料${fileList.length}份，建议创建案件进行管理。`,
-        });
-      }
-      setIsAnalyzing(false);
+    setUploadedFiles((current) => {
+      const paths = new Set(current.map((file) => file.path));
+      return [...current, ...additions.filter((file) => !paths.has(file.path))];
+    });
+    if (!matterTitle && additions[0]) {
+      setMatterTitle(additions[0].name.replace(/\.[^/.]+$/, ''));
     }
+    setIntakeMessage(null);
   };
 
-  const handleCreateFromAnalysis = async () => {
-    if (aiAnalysis) {
-      await createCase({
-        title: aiAnalysis.title,
-        case_type: aiAnalysis.caseType,
+  const handleCreateMatter = async () => {
+    if (!matterTitle.trim() || uploadedFiles.length === 0 || isImporting) return;
+    setIsImporting(true);
+    setIntakeMessage(null);
+
+    try {
+      const created = await createCase({
+        title: matterTitle.trim(),
+        case_type: matterType,
         status: 'pending',
-        court: aiAnalysis.court,
-        opposite_party: aiAnalysis.oppositeParty,
-        description: aiAnalysis.description
+        description: `由资料入口创建，共导入 ${uploadedFiles.length} 份材料。`,
       });
-      setCurrentPage('cases');
+
+      for (const file of uploadedFiles) {
+        await importFileToCase(created.id, file.path, 'evidence');
+      }
+
+      selectCase(created.id);
       setUploadedFiles([]);
-      setAiAnalysis(null);
+      setMatterTitle('');
+      setCurrentPage('cases');
+    } catch (error) {
+      setIntakeMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsImporting(false);
     }
   };
 
-  const handleSelectExistingCase = () => {
+  const openCase = (caseId: string) => {
+    selectCase(caseId);
     setCurrentPage('cases');
-    setUploadedFiles([]);
-    setAiAnalysis(null);
   };
 
   const handleExportData = async () => {
@@ -190,309 +114,237 @@ function App() {
       const json = await invoke<string>('export_app_data');
       const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const anchor = document.createElement('a');
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.href = url;
-      a.download = `legaldesk-backup-${stamp}.json`;
-      a.click();
+      anchor.href = url;
+      anchor.download = `legaldesk-backup-${stamp}.json`;
+      anchor.click();
       URL.revokeObjectURL(url);
-      setDataIoMessage({ kind: 'success', text: '已导出为 JSON 文件' });
+      setDataIoMessage({ kind: 'success', text: '已导出业务数据 JSON' });
       setTimeout(() => setDataIoMessage(null), 3000);
     } catch (error) {
-      console.error('export_app_data:', error);
-      const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '导出失败';
-      setDataIoMessage({ kind: 'error', text });
+      setDataIoMessage({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
     }
   };
 
   const handleImportDataClick = () => {
-    if (
-      !window.confirm(
-        '导入将覆盖当前数据库中的全部案件、附件记录、法律文书、证据与模板。此操作不可撤销，是否继续？'
-      )
-    ) {
-      return;
-    }
+    if (!window.confirm('导入会覆盖当前业务数据库。请确认已经保存现有备份，是否继续？')) return;
     importFileInputRef.current?.click();
   };
 
-  const handleImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
+
     try {
-      const text = await file.text();
-      await invoke('import_app_data', { json: text });
+      await invoke('import_app_data', { json: await file.text() });
       await fetchCases();
       await fetchTemplates();
       selectCase(null);
       setDataIoMessage({ kind: 'success', text: '数据已从备份恢复' });
       setTimeout(() => setDataIoMessage(null), 3000);
     } catch (error) {
-      console.error('import_app_data:', error);
-      const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '导入失败';
-      setDataIoMessage({ kind: 'error', text });
+      setDataIoMessage({ kind: 'error', text: error instanceof Error ? error.message : String(error) });
     }
   };
 
+  const navItems: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
+    { id: 'dashboard', label: '工作台', icon: LayoutDashboard },
+    { id: 'intake', label: '资料入口', icon: Upload },
+    { id: 'cases', label: '案件与事项', icon: Briefcase },
+    { id: 'agents', label: '智能体中心', icon: Bot },
+    { id: 'templates', label: '文书模板', icon: FileText },
+    { id: 'settings', label: '设置', icon: Settings },
+  ];
+
   return (
-    <div className="h-screen flex bg-[#f5f5f7]">
-      {/* Sidebar */}
-      <div className="sidebar w-64 flex flex-col">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
-              <Scale size={22} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-base font-semibold text-gray-900">LegalDesk</h1>
-              <p className="text-xs text-gray-500">法律工作者助手</p>
-            </div>
+    <div className="h-screen flex app-shell">
+      <aside className="sidebar w-64 flex flex-col" aria-label="主导航">
+        <div className="brand-block">
+          <div className="brand-mark"><Scale size={21} /></div>
+          <div>
+            <h1>LegalDesk</h1>
+            <p>桌面法律工作平台</p>
           </div>
         </div>
 
-        <nav className="flex-1 p-4">
-          <div className="space-y-1">
-            <button
-              onClick={() => setCurrentPage('dashboard')}
-              className={`sidebar-item w-full ${currentPage === 'dashboard' ? 'active' : ''}`}
-            >
-              <LayoutDashboard size={18} />
-              工作台
-            </button>
-            <button
-              onClick={() => setCurrentPage('upload')}
-              className={`sidebar-item w-full ${currentPage === 'upload' ? 'active' : ''}`}
-            >
-              <Upload size={18} />
-              上传文件
-            </button>
-            <button
-              onClick={() => setCurrentPage('cases')}
-              className={`sidebar-item w-full ${currentPage === 'cases' ? 'active' : ''}`}
-            >
-              <Briefcase size={18} />
-              案件管理
-            </button>
-            <button
-              onClick={() => setCurrentPage('templates')}
-              className={`sidebar-item w-full ${currentPage === 'templates' ? 'active' : ''}`}
-            >
-              <FileText size={18} />
-              文书模板
-            </button>
-            <button
-              onClick={() => setCurrentPage('settings')}
-              className={`sidebar-item w-full ${currentPage === 'settings' ? 'active' : ''}`}
-            >
-              <Settings size={18} />
-              设置
-            </button>
-          </div>
+        <nav className="flex-1 py-4">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => setCurrentPage(item.id)}
+                className={`sidebar-item w-full ${currentPage === item.id ? 'active' : ''}`}
+                aria-current={currentPage === item.id ? 'page' : undefined}
+              >
+                <Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
 
-        <div className="p-4 border-t border-gray-200">
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <Sparkles size={14} className="text-blue-500" />
-            <span>AI 助手已就绪</span>
+        <div className="sidebar-boundary">
+          <ShieldCheck size={16} />
+          <div>
+            <strong>本地优先</strong>
+            <span>Pi 受控运行 · 全程留痕</span>
           </div>
         </div>
-      </div>
+      </aside>
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        
-        {/* Dashboard Page */}
-        {currentPage === 'dashboard' && <Dashboard />}
+        {currentPage === 'dashboard' && <Dashboard onOpenCase={openCase} />}
 
-        {/* Upload Page */}
-        {currentPage === 'upload' && (
-          <div className="flex-1 overflow-auto p-8">
-            <div className="max-w-3xl mx-auto">
-              <h1 className="text-2xl font-semibold mb-2">添加案件文件</h1>
-              <p className="text-gray-500 mb-8">添加本地文件引用，AI 将自动分析并整理案件信息</p>
-
-              {/* Upload zone */}
-              <div 
-                className={`upload-zone ${uploadedFiles.length > 0 ? 'border-blue-500 bg-blue-50' : ''}`}
-                onClick={handleUpload}
-              >
-                {uploadedFiles.length === 0 ? (
-                  <>
-                    <Upload size={48} className="mx-auto mb-4 text-gray-400" />
-                    <p className="text-lg font-medium text-gray-700 mb-2">点击或拖拽文件到此处添加</p>
-                    <p className="text-gray-500">支持 PDF、Word、图片等格式（仅保存文件引用，不复制文件）</p>
-                  </>
-                ) : (
-                  <div className="space-y-3">
-                    {uploadedFiles.map((file, i) => (
-                      <div key={i} className="flex items-center gap-3 bg-white p-3 rounded-lg">
-                        <File size={20} className="text-blue-500" />
-                        <span className="flex-1 text-left">{file.name}</span>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); setUploadedFiles(f => f.filter((_, idx) => idx !== i)); }}
-                          className="p-1 hover:bg-gray-100 rounded"
-                        >
-                          <X size={16} className="text-gray-400" />
-                        </button>
-                      </div>
-                    ))}
-                    <p className="text-sm text-gray-500 mt-4">点击继续添加更多文件</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Analysis result */}
-              {isAnalyzing && (
-                <div className="card p-8 mt-6 text-center">
-                  <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                  <p className="text-lg font-medium">AI 正在分析文件...</p>
-                  <p className="text-gray-500 text-sm mt-1">请稍候</p>
+        {currentPage === 'intake' && (
+          <main className="flex-1 overflow-auto p-8" tabIndex={-1}>
+            <div className="max-w-4xl mx-auto">
+              <header className="workbench-header">
+                <div>
+                  <p className="eyebrow">CONTROLLED INTAKE</p>
+                  <h1>资料入口</h1>
+                  <p>先建立案件或事项，再将材料复制到本地受管目录。智能体不会自动读取未选择的文件。</p>
                 </div>
-              )}
+              </header>
 
-              {aiAnalysis && !isAnalyzing && (
-                <div className="card p-6 mt-6 animate-fadeIn">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Sparkles size={20} className="text-blue-500" />
-                    <h3 className="font-semibold">AI 分析结果</h3>
-                  </div>
-                  
-                  <div className="space-y-4">
-                    <div>
-                      <label className="text-sm text-gray-500">建议案件名称</label>
-                      <p className="font-medium">{aiAnalysis.title}</p>
-                    </div>
-                    <div>
-                      <label className="text-sm text-gray-500">案件类型</label>
-                      <p className="font-medium">
-                        {aiAnalysis.caseType === 'civil' ? '民事' : 
-                         aiAnalysis.caseType === 'criminal' ? '刑事' : 
-                         aiAnalysis.caseType === 'administrative' ? '行政' : '其他'}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="text-sm text-gray-500">案件描述</label>
-                      <p className="text-gray-600">{aiAnalysis.description}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 mt-6">
-                    <button onClick={handleCreateFromAnalysis} className="btn btn-primary flex-1">
-                      <ArrowRight size={18} />
-                      创建案件
-                    </button>
-                    <button onClick={handleSelectExistingCase} className="btn btn-secondary flex-1">
-                      选择已有案件
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Cases Page */}
-        {currentPage === 'cases' && (
-          selectedCaseId ? <CaseDetail /> : <CaseList />
-        )}
-
-        {/* Templates Page */}
-        {currentPage === 'templates' && <TemplatePage />}
-
-        {/* Settings Page */}
-        {currentPage === 'settings' && (
-          <div className="p-8 overflow-auto">
-            <div className="max-w-2xl">
-              <h1 className="text-2xl font-semibold mb-8">设置</h1>
-              
-              <div className="card p-6 mb-6">
-                <h2 className="font-semibold mb-4 flex items-center gap-2">
-                  <Sparkles size={18} className="text-blue-500" />
-                  AI 配置
-                </h2>
-                <div className="space-y-4">
+              <section className="intake-panel mt-7" aria-labelledby="intake-heading">
+                <div className="intake-form">
+                  <h2 id="intake-heading">新建事项</h2>
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">API Key</label>
+                    <label htmlFor="matter-title">事项名称</label>
                     <input
-                      type="password"
-                      placeholder="请输入 API Key"
-                      value={aiConfig.apiKey}
-                      onChange={(e) => setAiConfig({ ...aiConfig, apiKey: e.target.value })}
+                      id="matter-title"
                       className="input"
+                      value={matterTitle}
+                      onChange={(event) => setMatterTitle(event.target.value)}
+                      placeholder="输入案件或非诉事项名称"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">API 地址</label>
-                    <input
-                      type="text"
-                      placeholder="https://api.openai.com/v1"
-                      value={aiConfig.apiUrl}
-                      onChange={(e) => setAiConfig({ ...aiConfig, apiUrl: e.target.value })}
-                      className="input"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">模型</label>
+                    <label htmlFor="matter-type">事项类型</label>
                     <select
-                      value={aiConfig.model}
-                      onChange={(e) => setAiConfig({ ...aiConfig, model: e.target.value })}
+                      id="matter-type"
                       className="input"
+                      value={matterType}
+                      onChange={(event) => setMatterType(event.target.value)}
                     >
-                      <option value="gpt-4o-mini">GPT-4o Mini</option>
-                      <option value="gpt-4o">GPT-4o</option>
-                      <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                      <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-                      <option value="claude-3-haiku">Claude 3 Haiku</option>
+                      <option value="non_litigation">非诉事项</option>
+                      <option value="civil">民事</option>
+                      <option value="criminal">刑事</option>
+                      <option value="administrative">行政</option>
+                      <option value="arbitration">仲裁</option>
                     </select>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={handleSaveAiConfig} className="btn btn-primary">
-                      保存配置
-                    </button>
-                    {configSaved && <span className="text-green-600 text-sm">配置已保存</span>}
+                  <div className="intake-note">
+                    <Database size={17} />
+                    文件将复制到 LegalDesk 数据目录，原文件移动后仍可使用。
                   </div>
                 </div>
-              </div>
 
-              <div className="card p-6 mb-6">
-                <h2 className="font-semibold mb-4">数据管理</h2>
-                <p className="text-sm text-gray-500 mb-4">
-                  导出或导入 LegalDesk 完整业务数据（案件、文档记录、法律文书、证据、模板）。备份为 JSON
-                  文本；导入会替换当前库中的上述内容；案件目录中已保存的文件会尽可能保留（与备份中案件 ID
-                  一致的目录）。
-                </p>
-                <input
-                  ref={importFileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  className="hidden"
-                  onChange={handleImportFile}
-                />
-                <div className="flex flex-wrap items-center gap-3">
-                  <button type="button" onClick={handleExportData} className="btn btn-secondary">
-                    导出数据
-                  </button>
-                  <button type="button" onClick={handleImportDataClick} className="btn btn-secondary">
-                    导入数据
-                  </button>
-                  {dataIoMessage && (
-                    <span
-                      className={`text-sm ${dataIoMessage.kind === 'success' ? 'text-green-600' : 'text-red-600'}`}
-                    >
-                      {dataIoMessage.text}
-                    </span>
+                <div className="intake-files">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h2>本次导入材料</h2>
+                      <p>{uploadedFiles.length > 0 ? `已选择 ${uploadedFiles.length} 份` : '尚未选择文件'}</p>
+                    </div>
+                    <button type="button" className="btn btn-secondary" onClick={() => void handlePickFiles()}>
+                      <Upload size={17} /> 选择文件
+                    </button>
+                  </div>
+
+                  {uploadedFiles.length === 0 ? (
+                    <button type="button" className="file-drop" onClick={() => void handlePickFiles()}>
+                      <Upload size={28} />
+                      <span>选择需要纳入事项的本地材料</span>
+                      <small>PDF、Office、文本与常见图片格式</small>
+                    </button>
+                  ) : (
+                    <ul className="file-queue">
+                      {uploadedFiles.map((file) => (
+                        <li key={file.path}>
+                          <File size={17} />
+                          <div><strong>{file.name}</strong><span>{file.type.toUpperCase() || 'FILE'}</span></div>
+                          <button
+                            type="button"
+                            onClick={() => setUploadedFiles((current) => current.filter((item) => item.path !== file.path))}
+                            aria-label={`移除 ${file.name}`}
+                          >
+                            <X size={16} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                </div>
-              </div>
 
-              <div className="card p-6">
-                <h2 className="font-semibold mb-4">关于</h2>
-                <p className="text-gray-600">LegalDesk v0.1.0</p>
-                <p className="text-gray-500 text-sm mt-1">法律工作者 AI 助手</p>
+                  {intakeMessage && <div className="agent-error" role="alert">{intakeMessage}</div>}
+
+                  <button
+                    type="button"
+                    className="btn btn-primary w-full mt-5"
+                    onClick={() => void handleCreateMatter()}
+                    disabled={!matterTitle.trim() || uploadedFiles.length === 0 || isImporting}
+                  >
+                    {isImporting ? '正在建立受管目录…' : '创建事项并导入材料'}
+                    {!isImporting && <ArrowRight size={17} />}
+                  </button>
+                </div>
+              </section>
+            </div>
+          </main>
+        )}
+
+        {currentPage === 'cases' && (selectedCaseId ? <CaseDetail /> : <CaseList />)}
+        {currentPage === 'agents' && <AgentCenter onOpenCases={() => setCurrentPage('cases')} />}
+        {currentPage === 'templates' && <TemplatePage />}
+
+        {currentPage === 'settings' && (
+          <main className="p-8 overflow-auto" tabIndex={-1}>
+            <div className="max-w-3xl">
+              <header className="workbench-header mb-7">
+                <div>
+                  <p className="eyebrow">LOCAL CONFIGURATION</p>
+                  <h1>设置</h1>
+                  <p>模型认证由 Pi 自己管理；LegalDesk 前端不保存或读取 API Key。</p>
+                </div>
+              </header>
+
+              <div className="space-y-6">
+                <PiStatusCard />
+
+                <section className="card p-6" aria-labelledby="data-heading">
+                  <h2 id="data-heading" className="font-semibold mb-2">数据管理</h2>
+                  <p className="text-sm text-gray-500 mb-4">
+                    JSON 备份包含业务记录与智能体审计数据，不包含案件目录中的附件二进制文件。导入前请另外备份附件目录。
+                  </p>
+                  <input
+                    ref={importFileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={handleImportFile}
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button type="button" onClick={() => void handleExportData()} className="btn btn-secondary">导出数据</button>
+                    <button type="button" onClick={handleImportDataClick} className="btn btn-secondary">导入数据</button>
+                    {dataIoMessage && (
+                      <span className={`text-sm ${dataIoMessage.kind === 'success' ? 'text-green-700' : 'text-red-700'}`} role="status">
+                        {dataIoMessage.text}
+                      </span>
+                    )}
+                  </div>
+                </section>
+
+                <section className="card p-6" aria-labelledby="about-heading">
+                  <h2 id="about-heading" className="font-semibold">关于</h2>
+                  <p className="text-gray-700 mt-2">LegalDesk v0.2.0 · 桌面级法律工作平台</p>
+                  <p className="text-gray-500 text-sm mt-1">本地优先、可私有部署、智能体运行可追溯，所有专业结论由法律人员最终复核。</p>
+                </section>
               </div>
             </div>
-          </div>
+          </main>
         )}
       </div>
     </div>

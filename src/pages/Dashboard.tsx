@@ -3,8 +3,12 @@ import { useAppStore } from '../store';
 import { CASE_TYPE_LABELS } from '../types';
 import { Scale, Briefcase, FileText, Clock, AlertTriangle, TrendingUp, Calendar, Plus } from 'lucide-react';
 
-export function Dashboard() {
-  const { cases, fetchCases, selectCase } = useAppStore();
+interface DashboardProps {
+  onOpenCase: (caseId: string) => void;
+}
+
+export function Dashboard({ onOpenCase }: DashboardProps) {
+  const { cases, fetchCases } = useAppStore();
 
   useEffect(() => {
     fetchCases();
@@ -29,7 +33,11 @@ export function Dashboard() {
       ...c,
       deadlineDate: c.court_date ? new Date(c.court_date) : c.deadline ? new Date(c.deadline) : null,
     }))
-    .filter(c => c.deadlineDate && c.deadlineDate >= now)
+    .filter(c => {
+      if (!c.deadlineDate || c.deadlineDate < now) return false;
+      const days = Math.ceil((c.deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      return days <= 14;
+    })
     .sort((a, b) => (a.deadlineDate?.getTime() || 0) - (b.deadlineDate?.getTime() || 0))
     .slice(0, 5);
 
@@ -94,8 +102,8 @@ export function Dashboard() {
           </div>
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center">
-                <FileText size={20} className="text-purple-500" />
+              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
+                <FileText size={20} className="text-slate-600" />
               </div>
               <span className="text-2xl font-bold text-gray-900">{closedCases}</span>
             </div>
@@ -123,10 +131,11 @@ export function Dashboard() {
               ) : (
                 <div className="space-y-3">
                   {upcomingDeadlines.map((c) => (
-                    <div
+                    <button
+                      type="button"
                       key={c.id}
-                      onClick={() => selectCase(c.id)}
-                      className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                      onClick={() => onOpenCase(c.id)}
+                      className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors w-full text-left"
                     >
                       <div className={`w-16 text-center rounded-lg py-2 px-1 ${getDeadlineClass(c.deadlineDate)}`}>
                         <div className="text-xs font-medium">
@@ -145,7 +154,7 @@ export function Dashboard() {
                       <span className={`text-sm font-medium px-3 py-1 rounded-full ${getDeadlineClass(c.deadlineDate)}`}>
                         {getDaysUntil(c.deadlineDate)}
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -171,7 +180,7 @@ export function Dashboard() {
                       civil: 'bg-blue-500',
                       criminal: 'bg-red-500',
                       administrative: 'bg-yellow-500',
-                      arbitration: 'bg-purple-500',
+                      arbitration: 'bg-slate-500',
                       non_litigation: 'bg-green-500',
                     };
                     return (
@@ -228,10 +237,11 @@ export function Dashboard() {
           ) : (
             <div className="grid grid-cols-3 gap-4">
               {recentCases.map((c) => (
-                <div
+                <button
+                  type="button"
                   key={c.id}
-                  onClick={() => selectCase(c.id)}
-                  className="p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md cursor-pointer transition-all"
+                  onClick={() => onOpenCase(c.id)}
+                  className="p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md cursor-pointer transition-all text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <span className={`badge text-xs ${
@@ -247,7 +257,7 @@ export function Dashboard() {
                   </div>
                   <p className="font-medium text-gray-900 truncate">{c.title}</p>
                   {c.court && <p className="text-sm text-gray-500 truncate mt-1">{c.court}</p>}
-                </div>
+                </button>
               ))}
             </div>
           )}

@@ -1,19 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LegalDesk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.legaldesk.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist",
-    "devtools": true
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "LegalDesk - 法律工作者助手",
+        "title": "LegalDesk - 桌面法律工作平台",
         "width": 1200,
         "height": 800,
         "minWidth": 900,
@@ -21,7 +20,8 @@
         "center": true,
         "resizable": true,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "devtools": false
       }
     ],
     "security": {

@@ -81,6 +81,63 @@ export interface Template {
   updated_at: string;
 }
 
+export interface AgentDefinition {
+  id: string;
+  name: string;
+  summary: string;
+  outcome: string;
+  permissions: string[];
+  prompt: string;
+}
+
+export type AgentRunStatus = 'starting' | 'running' | 'completed' | 'cancelled' | 'failed';
+
+export interface AgentRun {
+  id: string;
+  case_id: string;
+  agent_id: string;
+  status: AgentRunStatus;
+  instruction: string;
+  document_ids: string[];
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+}
+
+export interface AgentArtifact {
+  id: string;
+  run_id: string;
+  case_id: string;
+  kind: 'draft';
+  title: string;
+  content: string;
+  review_status: 'pending' | 'accepted' | 'rejected';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PiRuntimeStatus {
+  installed: boolean;
+  ready: boolean;
+  version?: string;
+  required_version: string;
+  binary: string;
+  message: string;
+}
+
+export interface AgentEventEnvelope {
+  run_id: string;
+  event_type: string;
+  data: Record<string, unknown>;
+}
+
+export interface StartAgentRunInput {
+  case_id: string;
+  agent_id: string;
+  instruction: string;
+  document_ids: string[];
+}
+
 export type CaseType = 'civil' | 'criminal' | 'administrative' | 'arbitration' | 'non_litigation';
 export type CaseStatus = 'pending' | 'in_progress' | 'closed' | 'archived';
 export type DocumentCategory = 'evidence' | 'document' | 'record' | 'letter';

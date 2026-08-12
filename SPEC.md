@@ -1,195 +1,99 @@
-# LegalDesk - 法律工作者 AI 助手
+# LegalDesk 0.2 MVP 规格
 
-## 1. 项目概述
+## 1. 目标
 
-**项目名称**: LegalDesk  
-**类型**: 本地桌面应用（Tauri + React）  
-**目标用户**: 律师、法务、法官、检察官、法律学者等法律工作者
+LegalDesk 是面向律师、公司法务和法律服务团队的桌面级法律工作平台。0.2 版本目标不是做面向公众的在线法律咨询，也不是训练新的法律大模型，而是在既有 Tauri 应用中，以最小二次开发接入 Pi，完成“案件材料进入—受控智能体处理—人工审核产物”的本地工作闭环。
 
-## 2. 核心功能
+## 2. 产品原则
 
-### 2.1 案件管理
-- 创建/编辑/删除案件
-- 案件分类：民事、刑事、行政、仲裁、非诉
-- 案件状态：待处理、办理中、已结案、已归档
-- 案件期限管理（诉讼时效、开庭日期、举证期限等）
-- 案件搜索与过滤
+1. **案件是工作边界**：材料、智能体运行和产物必须归属某个案件。
+2. **本地优先**：业务数据和文件默认留在用户设备；私有部署是机构场景的默认演进方向。
+3. **人工最终审核**：智能体产物默认是待审核草稿，不能自动提交、签署、发送或作为法律意见发布。
+4. **最小权限**：Pi 不获得文件工具；LegalDesk 只将用户明确选择、属于当前案件且通过校验的文本内容快照交给智能体。
+5. **Pi 核心零 fork**：通过上游 RPC/SDK 适配，不修改 Pi 核心，不建立长期维护的分叉。
+6. **可追溯**：运行指令、选材范围、事件和产物应落入本地审计记录。
 
-### 2.2 卷宗整理
-- 支持格式：PDF、Word(.doc/.docx)、Excel(.xlsx)、PPT(.pptx)、Markdown(.md)、图片(.jpg/.png/.jpeg)、文本(.txt)
-- 文件夹式管理：证据材料、法律文书、庭审记录、往来函件
-- 文件标签与备注
-- 全文搜索（基于文件内容）
+## 3. MVP 范围
 
-### 2.3 法律文书起草
-- AI 辅助文书生成
-- 用户自定义模板管理
-- 支持的文书类型：起诉状、答辩状、代理词、辩护词、法律意见书、合同等
-- 文书版本历史
+### 3.1 基础工作台
 
-### 2.4 证据审核
-- 证据清单自动生成
-- 证据三性分析：真实性、合法性、关联性
-- 证据链分析
-- 证据可视化（关系图谱）
+- 案件创建、编辑、查询、状态管理和删除。
+- 文件导入到应用管理的案件目录，并按案件查看。
+- 法律文书、证据信息和模板的本地管理。
+- 本地数据导入、导出与恢复；恢复前必须校验数据与路径。
 
-## 3. 技术架构
+### 3.2 智能体工作台
 
-### 3.1 技术栈
-- **框架**: Tauri 2.x
-- **前端**: React 18 + TypeScript + Tailwind CSS
-- **状态管理**: Zustand
-- **本地数据库**: SQLite (via rusqlite)
-- **文件存储**: 本地文件系统
-- **AI 集成**: OpenAI API / Claude API / 本地模型
+首期只提供三个角色，避免无边界的“万能聊天助手”：
 
-### 3.2 数据结构
+| ID | 名称 | 主要任务 | 强制输出约束 |
+|---|---|---|---|
+| `material-organizer` | 材料整理智能体 | 分类材料、生成目录、发现缺失或重复材料 | 区分事实、推断与待核验项 |
+| `evidence-reviewer` | 证据审阅智能体 | 提供三性审阅线索、争议点和补证建议 | 不作最终证据认定；引用材料来源 |
+| `document-drafter` | 文书起草智能体 | 基于用户指令和选定材料生成文书草稿 | 不编造事实或法条；标明待确认项 |
 
-```
-~/.legaldesk/
-├── config.json          # 应用配置
-├── database/
-│   └── legaldesk.db     # SQLite 数据库
-├── cases/               # 案件文件存储
-│   └── {case_id}/
-│       ├── evidence/    # 证据材料
-│       ├── documents/   # 法律文书
-│       ├── records/     # 庭审记录
-│       └── letters/    # 往来函件
-└── templates/          # 用户自定义模板
-```
+一次运行的最小流程：
 
-### 3.3 数据库 Schema
+1. 用户进入案件并选择智能体。
+2. 用户明确选择输入材料并填写任务说明。
+3. LegalDesk 校验材料归属和 Pi 版本，创建运行记录。
+4. 受限 Pi 进程只读处理案件材料。
+5. LegalDesk 保存事件和产物，产物状态为“待人工审核”。
+6. 用户审阅、修改或驳回产物；应用不得自动产生外部法律效果。
 
-```sql
--- 案件表
-CREATE TABLE cases (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    case_number TEXT,
-    case_type TEXT, -- civil, criminal, administrative, arbitration, non_litigation
-    status TEXT, -- pending, in_progress, closed, archived
-    court TEXT,
-    opposite_party TEXT,
-    handler TEXT,
-    filing_date TEXT,
-    court_date TEXT,
-    deadline TEXT,
-    description TEXT,
-    tags TEXT,
-    created_at TEXT,
-    updated_at TEXT
-);
+### 3.3 明确不在 0.2 范围
 
--- 卷宗文件表
-CREATE TABLE documents (
-    id TEXT PRIMARY KEY,
-    case_id TEXT NOT NULL,
-    category TEXT, -- evidence, document, record, letter
-    filename TEXT NOT NULL,
-    filepath TEXT NOT NULL,
-    file_type TEXT,
-    file_size INTEGER,
-    tags TEXT,
-    notes TEXT,
-    created_at TEXT,
-    FOREIGN KEY (case_id) REFERENCES cases(id)
-);
+- 面向普通公众的法律咨询 SaaS。
+- 自动代理客户、自动发送邮件、自动提交法院或监管系统。
+- 默认启用 shell、任意文件写入或跨案件读取。
+- 自动联网检索法规、案例或事实，除非未来提供可审计的数据源和单独授权。
+- 多租户云端同步、团队 RBAC、机构 SSO 和远程集中运维。
+- 声称提供法律意见、胜诉概率或替代执业律师判断。
 
--- 法律文书表
-CREATE TABLE legal_documents (
-    id TEXT PRIMARY KEY,
-    case_id TEXT NOT NULL,
-    doc_type TEXT, -- complaint, answer, brief, opinion, contract, etc.
-    title TEXT NOT NULL,
-    content TEXT,
-    template_id TEXT,
-    version INTEGER DEFAULT 1,
-    created_at TEXT,
-    updated_at TEXT,
-    FOREIGN KEY (case_id) REFERENCES cases(id)
-);
+## 4. Pi 适配要求
 
--- 证据表
-CREATE TABLE evidence (
-    id TEXT PRIMARY KEY,
-    case_id TEXT NOT NULL,
-    doc_id TEXT,
-    evidence_name TEXT,
-    evidence_type TEXT, -- physical, documentary, testimonial, circumstantial
-    authenticity TEXT, -- verified, unverified, disputed
-    legality TEXT, -- legal, illegal, questionable
-    relevance TEXT, -- relevant, irrelevant, questionable
-    analysis TEXT,
-    created_at TEXT,
-    FOREIGN KEY (case_id) REFERENCES cases(id)
-);
+- 精确支持 `@earendil-works/pi-coding-agent@0.84.1`，不使用浮动版本作为生产兼容承诺。
+- 当前由用户显式安装 Pi；应用必须显示“未安装”“版本不匹配”或“就绪”，不得静默下载执行文件。
+- 首期以 RPC 模式承载运行和事件流；SDK 用于后续需要进程内生命周期管理或更深 UI 集成的场景。
+- Pi 使用 `--no-tools --no-approve`，并禁用未审阅的扩展、技能、主题、提示模板和上下文文件；首版快照仅支持 UTF-8 文本类型，单文件 256 KiB、单次合计 1 MiB。
+- 工作目录和会话目录必须位于应用管理的当前案件目录内。
+- Pi 上游升级需经过版本评估、回归测试和安全复核，再修改精确版本。
 
--- 模板表
-CREATE TABLE templates (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    category TEXT,
-    content TEXT NOT NULL,
-    variables TEXT, -- JSON array of variable names
-    created_at TEXT,
-    updated_at TEXT
-);
-```
+完整约束见 [docs/PI_INTEGRATION.md](./docs/PI_INTEGRATION.md)。
 
-## 4. 界面设计
+## 5. 安全与合规验收
 
-### 4.1 布局
-- 左侧：案件列表导航
-- 中间：主工作区（案件详情/卷宗/文书）
-- 右侧：AI 助手面板（可选）
+- [ ] 路径输入做规范化和归属校验，拒绝目录穿越、任意绝对路径和跨案件引用。
+- [ ] 删除操作只作用于应用管理目录中的目标对象。
+- [ ] 智能体进程不能获得 shell、写文件和任意扩展权限。
+- [ ] 模型提供方、联网范围和数据去向在运行前对用户可见。
+- [ ] 智能体产物以“待人工审核”保存，且界面持续展示非法律意见提示。
+- [ ] 运行记录至少包含智能体、案件、选定材料、指令、时间、状态、错误和产物。
+- [ ] 导入备份前校验结构、标识符、文件名和目标路径，不信任备份内原始路径。
+- [ ] CI 使用 `npm ci --ignore-scripts`，并拒绝根包生命周期脚本。
 
-### 4.2 主要页面
-1. **仪表盘**: 近期案件、待办事项、期限提醒
-2. **案件列表**: 所有案件卡片视图
-3. **案件详情**: 案件信息、卷宗文件、文书列表
-4. **卷宗管理**: 文件上传、分类、预览
-5. **文书起草**: 编辑器 + AI 辅助
-6. **证据审核**: 证据清单 + 三性分析
-7. **设置**: AI 配置、存储路径、数据备份
+## 6. MVP 验收场景
 
-## 5. AI 功能设计
+### 场景 A：整理卷宗
 
-### 5.1 文书起草
-- 用户输入关键信息（当事人、诉求、事实）
-- AI 生成初稿
-- 用户编辑完善
-- 版本保存
+用户选择案件内三份材料，材料整理智能体生成分类建议与缺失清单；产物保留材料引用，未被选择的文件不可访问。
 
-### 5.2 证据分析
-- 上传证据材料
-- AI 分析证据三性
-- 生成证据清单
+### 场景 B：审阅证据
 
-### 5.3 法律检索
-- 关键词检索相关法条
-- 案例参考
+用户选择证据材料，证据审阅智能体分别列出真实性、合法性、关联性的核验线索，并明确“需人工判断”；不输出确定的司法认定。
 
-## 6. 安全性
+### 场景 C：起草文书
 
-- 本地数据加密存储（可选）
-- 敏感操作日志
-- 定期自动备份
+用户输入文书类型和诉求，文书起草智能体基于选定材料生成草稿；材料未载明的信息以待确认占位，不得自行补造。
 
-## 7. 发展阶段
+### 场景 D：安全拒绝
 
-### Phase 1: MVP
-- [x] 项目初始化
-- [ ] 案件 CRUD
-- [ ] 基础文件管理
-- [ ] 简单 AI 对话
+当材料不属于当前案件、Pi 版本不是 `0.84.1`、运行请求试图启用写入工具或工作目录越界时，系统拒绝运行并记录原因。
 
-### Phase 2: 核心功能
-- [ ] 法律文书起草
-- [ ] 证据审核
-- [ ] 模板管理
+## 7. 后续路线
 
-### Phase 3: 增强功能
-- [ ] 法律检索
-- [ ] 多语言支持
-- [ ] 数据同步
+- 0.3：人工审核状态流、结构化引用、可重放审计和受控模型配置。
+- 0.4：机构私有部署基线、权限策略、密钥托管和集中审计。
+- 后续：经授权的数据源连接、检索增强、团队协作和合规导出。
+
+路线图是规划，不代表功能已经交付。

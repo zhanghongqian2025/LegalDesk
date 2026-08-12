@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Reject root lifecycle scripts
+        shell: bash
+        run: |
+          node <<'NODE'
+          const manifest = require('./package.json');
+          const scripts = manifest.scripts ?? {};
+          const forbidden = ['preinstall', 'install', 'postinstall'].filter((name) => scripts[name]);
+
+          if (forbidden.length > 0) {
+            console.error(`Forbidden root lifecycle scripts: ${forbidden.join(', ')}`);
+            process.exit(1);
+          }
+
+          console.log('No root install lifecycle scripts found.');
+          NODE
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Check Rust backend
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Test Rust security boundaries
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml

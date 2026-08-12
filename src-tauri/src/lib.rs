@@ -1,3 +1,4 @@
+use chrono::Utc;
 use rusqlite::{Connection, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -5,10 +6,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
 use uuid::Uuid;
-use chrono::Utc;
+
+mod pi;
 
 // 数据库状态
-pub struct DbState(pub Mutex<Connection>);
+pub(crate) struct DbState(pub Mutex<Connection>);
 
 // 数据模型
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -98,8 +100,45 @@ pub struct Template {
     pub updated_at: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentRunExport {
+    pub id: String,
+    pub case_id: String,
+    pub agent_id: String,
+    pub status: String,
+    pub instruction: String,
+    pub document_ids: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentEventExport {
+    pub id: String,
+    pub run_id: String,
+    pub sequence: i64,
+    pub kind: String,
+    pub payload: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentArtifactExport {
+    pub id: String,
+    pub run_id: String,
+    pub case_id: String,
+    pub kind: String,
+    pub title: String,
+    pub content: String,
+    pub review_status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // 初始化数据库
 fn init_database(conn: &Connection) -> SqliteResult<()> {
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS cases (
             id TEXT PRIMARY KEY,
@@ -184,23 +223,91 @@ fn init_database(conn: &Connection) -> SqliteResult<()> {
         [],
     )?;
 
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_runs (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            instruction TEXT NOT NULL,
+            document_ids TEXT NOT NULL DEFAULT '[]',
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            error TEXT,
+            FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS agent_events (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+            UNIQUE (run_id, sequence)
+        );
+        CREATE TABLE IF NOT EXISTS agent_artifacts (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            case_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            review_status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+            FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_documents_case_id ON documents(case_id);
+        CREATE INDEX IF NOT EXISTS idx_agent_runs_case_id ON agent_runs(case_id, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_events_run_id ON agent_events(run_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_agent_artifacts_run_id ON agent_artifacts(run_id);",
+    )?;
+
     Ok(())
 }
 
 // 获取应用数据目录
-fn get_data_dir() -> PathBuf {
+pub(crate) fn get_data_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("LegalDesk")
 }
 
 // 获取案件目录
-fn get_case_dir(case_id: &str) -> PathBuf {
+pub(crate) fn get_case_dir(case_id: &str) -> PathBuf {
     get_data_dir().join("cases").join(case_id)
+}
+
+pub(crate) fn validate_uuid(value: &str, label: &str) -> Result<(), String> {
+    Uuid::parse_str(value)
+        .map(|_| ())
+        .map_err(|_| format!("{}不是有效的 UUID", label))
+}
+
+fn validate_category(category: &str) -> Result<(), String> {
+    match category {
+        "evidence" | "document" | "record" | "letter" => Ok(()),
+        _ => Err("不支持的材料分类".to_string()),
+    }
+}
+
+fn canonical_managed_path(
+    path: &std::path::Path,
+    base: &std::path::Path,
+) -> Result<PathBuf, String> {
+    let canonical_base = fs::canonicalize(base).map_err(|e| format!("无法解析受管目录: {}", e))?;
+    let canonical_path = fs::canonicalize(path).map_err(|e| format!("无法解析受管文件: {}", e))?;
+    if !canonical_path.starts_with(&canonical_base) || canonical_path == canonical_base {
+        return Err("拒绝访问 LegalDesk 受管目录之外的路径".to_string());
+    }
+    Ok(canonical_path)
 }
 
 // 确保案件目录存在
 fn ensure_case_dir(case_id: &str) -> Result<PathBuf, String> {
+    validate_uuid(case_id, "案件 ID")?;
     let case_dir = get_case_dir(case_id);
     fs::create_dir_all(&case_dir).map_err(|e| format!("创建案件目录失败: {}", e))?;
     Ok(case_dir)
@@ -243,6 +350,7 @@ fn get_cases(db: State<DbState>) -> Result<Vec<Case>, String> {
 
 #[tauri::command]
 fn get_case(db: State<DbState>, id: String) -> Result<Option<Case>, String> {
+    validate_uuid(&id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT * FROM cases WHERE id = ?")
@@ -328,6 +436,7 @@ fn create_case(db: State<DbState>, input: CreateCaseInput) -> Result<Case, Strin
 
 #[tauri::command]
 fn update_case(db: State<DbState>, id: String, input: CreateCaseInput) -> Result<Case, String> {
+    validate_uuid(&id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
 
@@ -353,7 +462,9 @@ fn update_case(db: State<DbState>, id: String, input: CreateCaseInput) -> Result
     .map_err(|e| e.to_string())?;
 
     let created_at: String = conn
-        .query_row("SELECT created_at FROM cases WHERE id = ?", [&id], |row| row.get(0))
+        .query_row("SELECT created_at FROM cases WHERE id = ?", [&id], |row| {
+            row.get(0)
+        })
         .map_err(|e| e.to_string())?;
 
     Ok(Case {
@@ -377,14 +488,17 @@ fn update_case(db: State<DbState>, id: String, input: CreateCaseInput) -> Result
 
 #[tauri::command]
 fn delete_case(db: State<DbState>, id: String) -> Result<(), String> {
+    validate_uuid(&id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    
-    // 删除案件目录
+
+    // UUID 校验和 canonicalize 双重约束，避免目录穿越或符号链接越界。
     let case_dir = get_case_dir(&id);
     if case_dir.exists() {
-        let _ = fs::remove_dir_all(&case_dir);
+        let cases_root = get_data_dir().join("cases");
+        let managed_case_dir = canonical_managed_path(&case_dir, &cases_root)?;
+        fs::remove_dir_all(&managed_case_dir).map_err(|e| format!("删除案件目录失败: {}", e))?;
     }
-    
+
     conn.execute("DELETE FROM cases WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -393,6 +507,7 @@ fn delete_case(db: State<DbState>, id: String) -> Result<(), String> {
 // 文档管理命令
 #[tauri::command]
 fn get_documents(db: State<DbState>, case_id: String) -> Result<Vec<Document>, String> {
+    validate_uuid(&case_id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT * FROM documents WHERE case_id = ? ORDER BY created_at DESC")
@@ -429,45 +544,66 @@ fn import_file_to_case(
     source_path: String,
     category: String,
 ) -> Result<Document, String> {
+    validate_uuid(&case_id, "案件 ID")?;
+    validate_category(&category)?;
+    {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM cases WHERE id = ?)",
+                [&case_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("案件不存在".to_string());
+        }
+    }
+
     // 确保案件目录存在
     ensure_case_dir(&case_id)?;
-    
+
     // 验证源文件存在
     let source = PathBuf::from(&source_path);
     if !source.exists() {
         return Err(format!("源文件不存在: {}", source_path));
     }
-    
+
     // 获取文件名
     let filename = source
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or("无法获取文件名")?;
-    
+
     // 生成唯一文件名（防止重名覆盖）
     let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
     let unique_filename = if ext.is_empty() {
         format!("{}_{}", stem, &Uuid::new_v4().to_string()[..8])
     } else {
         format!("{}_{}.{}", stem, &Uuid::new_v4().to_string()[..8], ext)
     };
-    
+
     // 目标路径
     let case_dir = get_case_dir(&case_id);
     let dest_path = case_dir.join(&unique_filename);
-    
+
     // 复制文件
     fs::copy(&source, &dest_path).map_err(|e| format!("文件复制失败: {}", e))?;
-    
+
     // 获取文件大小
-    let file_size = fs::metadata(&dest_path)
-        .map(|m| m.len() as i64)
-        .ok();
-    
+    let file_size = fs::metadata(&dest_path).map(|m| m.len() as i64).ok();
+
     // 获取文件扩展名
-    let file_type = if ext.is_empty() { None } else { Some(ext.to_lowercase()) };
-    
+    let file_type = if ext.is_empty() {
+        None
+    } else {
+        Some(ext.to_lowercase())
+    };
+
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -502,13 +638,18 @@ fn add_document(
     file_type: Option<String>,
     file_size: Option<i64>,
 ) -> Result<Document, String> {
+    validate_uuid(&case_id, "案件 ID")?;
+    validate_category(&category)?;
+    let managed_filepath =
+        canonical_managed_path(std::path::Path::new(&filepath), &get_case_dir(&case_id))?;
+    let managed_filepath = managed_filepath.to_string_lossy().to_string();
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     conn.execute(
         "INSERT INTO documents (id, case_id, category, filename, filepath, file_type, file_size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        rusqlite::params![&id, &case_id, &category, &filename, &filepath, &file_type, &file_size, &now],
+        rusqlite::params![&id, &case_id, &category, &filename, &managed_filepath, &file_type, &file_size, &now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -517,7 +658,7 @@ fn add_document(
         case_id,
         category,
         filename,
-        filepath,
+        filepath: managed_filepath,
         file_type,
         file_size,
         tags: None,
@@ -528,20 +669,23 @@ fn add_document(
 
 #[tauri::command]
 fn delete_document(db: State<DbState>, id: String) -> Result<(), String> {
+    validate_uuid(&id, "材料 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    
-    // 获取文件路径并删除文件
-    if let Ok(filepath) = conn.query_row(
-        "SELECT filepath FROM documents WHERE id = ?",
+
+    // 仅允许删除所属案件受管目录中的文件。
+    if let Ok((case_id, filepath)) = conn.query_row(
+        "SELECT case_id, filepath FROM documents WHERE id = ?",
         [&id],
-        |row| row.get::<_, String>(0),
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     ) {
+        validate_uuid(&case_id, "案件 ID")?;
         let path = PathBuf::from(&filepath);
         if path.exists() {
-            let _ = fs::remove_file(path);
+            let managed_path = canonical_managed_path(&path, &get_case_dir(&case_id))?;
+            fs::remove_file(managed_path).map_err(|e| format!("删除材料失败: {}", e))?;
         }
     }
-    
+
     conn.execute("DELETE FROM documents WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -550,6 +694,7 @@ fn delete_document(db: State<DbState>, id: String) -> Result<(), String> {
 // 法律文书命令
 #[tauri::command]
 fn get_legal_documents(db: State<DbState>, case_id: String) -> Result<Vec<LegalDocument>, String> {
+    validate_uuid(&case_id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT * FROM legal_documents WHERE case_id = ? ORDER BY updated_at DESC")
@@ -585,19 +730,28 @@ fn save_legal_document(
     content: Option<String>,
     id: Option<String>,
 ) -> Result<LegalDocument, String> {
+    validate_uuid(&case_id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
 
     if let Some(existing_id) = id {
+        validate_uuid(&existing_id, "文书 ID")?;
+        let (stored_case_id, template_id, version, created_at): (String, Option<String>, i32, String) = conn
+            .query_row(
+                "SELECT case_id, template_id, version, created_at FROM legal_documents WHERE id = ?",
+                [&existing_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(|e| e.to_string())?;
+        if stored_case_id != case_id {
+            return Err("文书不属于当前案件".to_string());
+        }
+
         conn.execute(
-            "UPDATE legal_documents SET doc_type = ?, title = ?, content = ?, updated_at = ? WHERE id = ?",
+            "UPDATE legal_documents SET doc_type = ?, title = ?, content = ?, version = version + 1, updated_at = ? WHERE id = ?",
             rusqlite::params![&doc_type, &title, &content, &now, &existing_id],
         )
         .map_err(|e| e.to_string())?;
-
-        let created_at: String = conn
-            .query_row("SELECT created_at FROM legal_documents WHERE id = ?", [&existing_id], |row| row.get(0))
-            .map_err(|e| e.to_string())?;
 
         Ok(LegalDocument {
             id: existing_id,
@@ -605,8 +759,8 @@ fn save_legal_document(
             doc_type,
             title,
             content,
-            template_id: None,
-            version: 1,
+            template_id,
+            version: version + 1,
             created_at,
             updated_at: now,
         })
@@ -634,6 +788,7 @@ fn save_legal_document(
 
 #[tauri::command]
 fn delete_legal_document(db: State<DbState>, id: String) -> Result<(), String> {
+    validate_uuid(&id, "文书 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM legal_documents WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
@@ -643,6 +798,7 @@ fn delete_legal_document(db: State<DbState>, id: String) -> Result<(), String> {
 // 证据管理命令
 #[tauri::command]
 fn get_evidence(db: State<DbState>, case_id: String) -> Result<Vec<Evidence>, String> {
+    validate_uuid(&case_id, "案件 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT * FROM evidence WHERE case_id = ? ORDER BY created_at DESC")
@@ -682,6 +838,21 @@ fn add_evidence(
     relevance: Option<String>,
     analysis: Option<String>,
 ) -> Result<Evidence, String> {
+    validate_uuid(&case_id, "案件 ID")?;
+    if let Some(document_id) = &doc_id {
+        validate_uuid(document_id, "材料 ID")?;
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let owner: String = conn
+            .query_row(
+                "SELECT case_id FROM documents WHERE id = ?",
+                [document_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if owner != case_id {
+            return Err("证据关联材料不属于当前案件".to_string());
+        }
+    }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -717,14 +888,21 @@ fn update_evidence(
     relevance: Option<String>,
     analysis: Option<String>,
 ) -> Result<Evidence, String> {
+    validate_uuid(&id, "证据 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     let case_id: String = conn
-        .query_row("SELECT case_id FROM evidence WHERE id = ?", [&id], |row| row.get(0))
+        .query_row("SELECT case_id FROM evidence WHERE id = ?", [&id], |row| {
+            row.get(0)
+        })
         .map_err(|e| e.to_string())?;
 
     let created_at: String = conn
-        .query_row("SELECT created_at FROM evidence WHERE id = ?", [&id], |row| row.get(0))
+        .query_row(
+            "SELECT created_at FROM evidence WHERE id = ?",
+            [&id],
+            |row| row.get(0),
+        )
         .map_err(|e| e.to_string())?;
 
     conn.execute(
@@ -749,6 +927,7 @@ fn update_evidence(
 
 #[tauri::command]
 fn delete_evidence(db: State<DbState>, id: String) -> Result<(), String> {
+    validate_uuid(&id, "证据 ID")?;
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM evidence WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
@@ -802,7 +981,11 @@ fn save_template(
         .map_err(|e| e.to_string())?;
 
         let created_at: String = conn
-            .query_row("SELECT created_at FROM templates WHERE id = ?", [&existing_id], |row| row.get(0))
+            .query_row(
+                "SELECT created_at FROM templates WHERE id = ?",
+                [&existing_id],
+                |row| row.get(0),
+            )
             .map_err(|e| e.to_string())?;
 
         Ok(Template {
@@ -852,9 +1035,147 @@ pub struct AppDataExport {
     pub legal_documents: Vec<LegalDocument>,
     pub evidence: Vec<Evidence>,
     pub templates: Vec<Template>,
+    #[serde(default)]
+    pub agent_runs: Vec<AgentRunExport>,
+    #[serde(default)]
+    pub agent_events: Vec<AgentEventExport>,
+    #[serde(default)]
+    pub agent_artifacts: Vec<AgentArtifactExport>,
 }
 
-const APP_DATA_EXPORT_VERSION: u32 = 1;
+const APP_DATA_EXPORT_VERSION: u32 = 2;
+
+fn backup_document_name(document: &Document) -> Result<String, String> {
+    let candidate = std::path::Path::new(&document.filepath)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&document.filename);
+    let candidate_path = std::path::Path::new(candidate);
+    if candidate_path.components().count() != 1 || candidate == "." || candidate == ".." {
+        return Err(format!("材料 {} 的受管文件名无效", document.id));
+    }
+    Ok(candidate.to_string())
+}
+
+fn validate_backup(data: &AppDataExport) -> Result<(), String> {
+    if data.version != 1 && data.version != APP_DATA_EXPORT_VERSION {
+        return Err(format!(
+            "不支持的备份版本: {}（当前支持 v1 和 v{}）",
+            data.version, APP_DATA_EXPORT_VERSION
+        ));
+    }
+
+    let mut case_ids = std::collections::HashSet::new();
+    for case in &data.cases {
+        validate_uuid(&case.id, "备份案件 ID")?;
+        if case.title.trim().is_empty() || !case_ids.insert(case.id.clone()) {
+            return Err("备份包含空案件名称或重复案件 ID".to_string());
+        }
+    }
+
+    let mut document_ids = std::collections::HashSet::new();
+    for document in &data.documents {
+        validate_uuid(&document.id, "备份材料 ID")?;
+        validate_uuid(&document.case_id, "备份材料案件 ID")?;
+        validate_category(&document.category)?;
+        backup_document_name(document)?;
+        if !case_ids.contains(&document.case_id) || !document_ids.insert(document.id.clone()) {
+            return Err("备份材料的案件关联无效或材料 ID 重复".to_string());
+        }
+    }
+
+    let mut legal_document_ids = std::collections::HashSet::new();
+    for document in &data.legal_documents {
+        validate_uuid(&document.id, "备份文书 ID")?;
+        validate_uuid(&document.case_id, "备份文书案件 ID")?;
+        if !case_ids.contains(&document.case_id) || !legal_document_ids.insert(document.id.clone())
+        {
+            return Err("备份文书的案件关联无效或文书 ID 重复".to_string());
+        }
+    }
+
+    let mut evidence_ids = std::collections::HashSet::new();
+    for evidence in &data.evidence {
+        validate_uuid(&evidence.id, "备份证据 ID")?;
+        validate_uuid(&evidence.case_id, "备份证据案件 ID")?;
+        if !case_ids.contains(&evidence.case_id) || !evidence_ids.insert(evidence.id.clone()) {
+            return Err("备份证据的案件关联无效或证据 ID 重复".to_string());
+        }
+        if let Some(document_id) = &evidence.doc_id {
+            validate_uuid(document_id, "备份证据材料 ID")?;
+            let document = data
+                .documents
+                .iter()
+                .find(|document| &document.id == document_id)
+                .ok_or_else(|| "备份证据引用了不存在的材料".to_string())?;
+            if document.case_id != evidence.case_id {
+                return Err("备份证据和关联材料不属于同一案件".to_string());
+            }
+        }
+    }
+
+    let mut template_ids = std::collections::HashSet::new();
+    for template in &data.templates {
+        validate_uuid(&template.id, "备份模板 ID")?;
+        if !template_ids.insert(template.id.clone()) {
+            return Err("备份包含重复模板 ID".to_string());
+        }
+    }
+
+    let mut run_ids = std::collections::HashSet::new();
+    for run in &data.agent_runs {
+        validate_uuid(&run.id, "备份运行 ID")?;
+        validate_uuid(&run.case_id, "备份运行案件 ID")?;
+        if !case_ids.contains(&run.case_id) || !run_ids.insert(run.id.clone()) {
+            return Err("备份智能体运行的案件关联无效或运行 ID 重复".to_string());
+        }
+        let ids: Vec<String> = serde_json::from_str(&run.document_ids)
+            .map_err(|_| "备份智能体运行的材料清单格式无效".to_string())?;
+        for document_id in ids {
+            validate_uuid(&document_id, "备份运行材料 ID")?;
+            let document = data
+                .documents
+                .iter()
+                .find(|document| document.id == document_id)
+                .ok_or_else(|| "备份智能体运行引用了不存在的材料".to_string())?;
+            if document.case_id != run.case_id {
+                return Err("备份智能体运行引用了其他案件的材料".to_string());
+            }
+        }
+    }
+
+    let mut event_ids = std::collections::HashSet::new();
+    for event in &data.agent_events {
+        validate_uuid(&event.id, "备份运行事件 ID")?;
+        validate_uuid(&event.run_id, "备份事件运行 ID")?;
+        if !run_ids.contains(&event.run_id) || !event_ids.insert(event.id.clone()) {
+            return Err("备份运行事件的关联无效或事件 ID 重复".to_string());
+        }
+        serde_json::from_str::<serde_json::Value>(&event.payload)
+            .map_err(|_| "备份运行事件载荷不是有效 JSON".to_string())?;
+    }
+
+    let mut artifact_ids = std::collections::HashSet::new();
+    for artifact in &data.agent_artifacts {
+        validate_uuid(&artifact.id, "备份智能体草稿 ID")?;
+        validate_uuid(&artifact.run_id, "备份草稿运行 ID")?;
+        validate_uuid(&artifact.case_id, "备份草稿案件 ID")?;
+        let run = data
+            .agent_runs
+            .iter()
+            .find(|run| run.id == artifact.run_id)
+            .ok_or_else(|| "备份智能体草稿引用了不存在的运行".to_string())?;
+        if run.case_id != artifact.case_id
+            || !case_ids.contains(&artifact.case_id)
+            || !artifact_ids.insert(artifact.id.clone())
+        {
+            return Err("备份智能体草稿的关联无效或草稿 ID 重复".to_string());
+        }
+    }
+
+    Ok(())
+}
 
 #[tauri::command]
 fn export_app_data(db: State<DbState>) -> Result<String, String> {
@@ -864,7 +1185,7 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
         let mut stmt = conn
             .prepare("SELECT * FROM cases ORDER BY updated_at DESC")
             .map_err(|e| e.to_string())?;
-        stmt
+        let rows = stmt
             .query_map([], |row| {
                 Ok(Case {
                     id: row.get(0)?,
@@ -886,14 +1207,15 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
     };
 
-    let documents: Vec<Document> = {
+    let mut documents: Vec<Document> = {
         let mut stmt = conn
             .prepare("SELECT * FROM documents ORDER BY case_id, created_at")
             .map_err(|e| e.to_string())?;
-        stmt
+        let rows = stmt
             .query_map([], |row| {
                 Ok(Document {
                     id: row.get(0)?,
@@ -910,14 +1232,20 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
     };
+
+    // v2 备份不暴露或信任绝对路径，只保留受管文件的相对名称。
+    for document in &mut documents {
+        document.filepath = backup_document_name(document)?;
+    }
 
     let legal_documents: Vec<LegalDocument> = {
         let mut stmt = conn
             .prepare("SELECT * FROM legal_documents ORDER BY case_id, updated_at DESC")
             .map_err(|e| e.to_string())?;
-        stmt
+        let rows = stmt
             .query_map([], |row| {
                 Ok(LegalDocument {
                     id: row.get(0)?,
@@ -933,14 +1261,15 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
     };
 
     let evidence: Vec<Evidence> = {
         let mut stmt = conn
             .prepare("SELECT * FROM evidence ORDER BY case_id, created_at DESC")
             .map_err(|e| e.to_string())?;
-        stmt
+        let rows = stmt
             .query_map([], |row| {
                 Ok(Evidence {
                     id: row.get(0)?,
@@ -957,14 +1286,15 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
     };
 
     let templates: Vec<Template> = {
         let mut stmt = conn
             .prepare("SELECT * FROM templates ORDER BY name")
             .map_err(|e| e.to_string())?;
-        stmt
+        let rows = stmt
             .query_map([], |row| {
                 Ok(Template {
                     id: row.get(0)?,
@@ -978,7 +1308,74 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
             })
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
+    };
+
+    let agent_runs: Vec<AgentRunExport> = {
+        let mut stmt = conn
+            .prepare("SELECT id, case_id, agent_id, status, instruction, document_ids, started_at, finished_at, error FROM agent_runs ORDER BY started_at DESC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AgentRunExport {
+                    id: row.get(0)?,
+                    case_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    status: row.get(3)?,
+                    instruction: row.get(4)?,
+                    document_ids: row.get(5)?,
+                    started_at: row.get(6)?,
+                    finished_at: row.get(7)?,
+                    error: row.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    let agent_events: Vec<AgentEventExport> = {
+        let mut stmt = conn
+            .prepare("SELECT id, run_id, sequence, kind, payload, created_at FROM agent_events ORDER BY run_id, sequence")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AgentEventExport {
+                    id: row.get(0)?,
+                    run_id: row.get(1)?,
+                    sequence: row.get(2)?,
+                    kind: row.get(3)?,
+                    payload: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    let agent_artifacts: Vec<AgentArtifactExport> = {
+        let mut stmt = conn
+            .prepare("SELECT id, run_id, case_id, kind, title, content, review_status, created_at, updated_at FROM agent_artifacts ORDER BY created_at")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AgentArtifactExport {
+                    id: row.get(0)?,
+                    run_id: row.get(1)?,
+                    case_id: row.get(2)?,
+                    kind: row.get(3)?,
+                    title: row.get(4)?,
+                    content: row.get(5)?,
+                    review_status: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
 
     let payload = AppDataExport {
@@ -989,6 +1386,9 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
         legal_documents,
         evidence,
         templates,
+        agent_runs,
+        agent_events,
+        agent_artifacts,
     };
 
     serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())
@@ -996,13 +1396,17 @@ fn export_app_data(db: State<DbState>) -> Result<String, String> {
 
 #[tauri::command]
 fn import_app_data(db: State<DbState>, json: String) -> Result<(), String> {
-    let data: AppDataExport = serde_json::from_str(&json).map_err(|e| format!("JSON 解析失败: {}", e))?;
+    let mut data: AppDataExport =
+        serde_json::from_str(&json).map_err(|e| format!("JSON 解析失败: {}", e))?;
+    validate_backup(&data)?;
 
-    if data.version != APP_DATA_EXPORT_VERSION {
-        return Err(format!(
-            "不支持的备份版本: {}（当前支持 v{}）",
-            data.version, APP_DATA_EXPORT_VERSION
-        ));
+    // 无论 v1 中保存的是何种路径，都只恢复为案件受管目录内的相对文件名。
+    for document in &mut data.documents {
+        let managed_name = backup_document_name(document)?;
+        document.filepath = get_case_dir(&document.case_id)
+            .join(managed_name)
+            .to_string_lossy()
+            .to_string();
     }
 
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -1011,11 +1415,12 @@ fn import_app_data(db: State<DbState>, json: String) -> Result<(), String> {
         let mut stmt = conn
             .prepare("SELECT id FROM cases")
             .map_err(|e| e.to_string())?;
-        stmt
+        let rows = stmt
             .query_map([], |row| row.get(0))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
-            .collect()
+            .collect();
+        rows
     };
 
     let new_case_ids: std::collections::HashSet<String> =
@@ -1025,6 +1430,12 @@ fn import_app_data(db: State<DbState>, json: String) -> Result<(), String> {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
         tx.execute("DELETE FROM evidence", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM agent_events", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM agent_artifacts", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM agent_runs", [])
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM legal_documents", [])
             .map_err(|e| e.to_string())?;
@@ -1131,16 +1542,53 @@ fn import_app_data(db: State<DbState>, json: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
 
+        for run in &data.agent_runs {
+            tx.execute(
+                "INSERT INTO agent_runs (id, case_id, agent_id, status, instruction, document_ids, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &run.id, &run.case_id, &run.agent_id, &run.status, &run.instruction,
+                    &run.document_ids, &run.started_at, &run.finished_at, &run.error,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for event in &data.agent_events {
+            tx.execute(
+                "INSERT INTO agent_events (id, run_id, sequence, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &event.id, &event.run_id, &event.sequence, &event.kind,
+                    &event.payload, &event.created_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        for artifact in &data.agent_artifacts {
+            tx.execute(
+                "INSERT INTO agent_artifacts (id, run_id, case_id, kind, title, content, review_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rusqlite::params![
+                    &artifact.id, &artifact.run_id, &artifact.case_id, &artifact.kind,
+                    &artifact.title, &artifact.content, &artifact.review_status,
+                    &artifact.created_at, &artifact.updated_at,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
         tx.commit().map_err(|e| e.to_string())?;
     }
 
     drop(conn);
 
     for old_id in old_case_ids {
-        if !new_case_ids.contains(&old_id) {
+        if !new_case_ids.contains(&old_id) && validate_uuid(&old_id, "历史案件 ID").is_ok() {
             let case_dir = get_case_dir(&old_id);
             if case_dir.exists() {
-                let _ = fs::remove_dir_all(&case_dir);
+                let cases_root = get_data_dir().join("cases");
+                if let Ok(managed_case_dir) = canonical_managed_path(&case_dir, &cases_root) {
+                    let _ = fs::remove_dir_all(managed_case_dir);
+                }
             }
         }
     }
@@ -1180,10 +1628,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         .manage(DbState(Mutex::new(conn)))
+        .manage(pi::PiState::default())
         .invoke_handler(tauri::generate_handler![
             get_cases,
             get_case,
@@ -1207,7 +1654,102 @@ pub fn run() {
             import_file_to_case,
             export_app_data,
             import_app_data,
+            pi::get_pi_status,
+            pi::start_agent_run,
+            pi::cancel_agent_run,
+            pi::get_agent_runs,
+            pi::get_agent_artifacts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_case(id: String) -> Case {
+        Case {
+            id,
+            title: "测试案件".to_string(),
+            case_number: None,
+            case_type: "civil".to_string(),
+            status: "pending".to_string(),
+            court: None,
+            opposite_party: None,
+            handler: None,
+            filing_date: None,
+            court_date: None,
+            deadline: None,
+            description: None,
+            tags: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn empty_backup(version: u32, case: Case) -> AppDataExport {
+        AppDataExport {
+            version,
+            exported_at: "2026-01-01T00:00:00Z".to_string(),
+            cases: vec![case],
+            documents: vec![],
+            legal_documents: vec![],
+            evidence: vec![],
+            templates: vec![],
+            agent_runs: vec![],
+            agent_events: vec![],
+            agent_artifacts: vec![],
+        }
+    }
+
+    #[test]
+    fn backup_validation_accepts_v1_and_rejects_path_like_case_ids() {
+        let valid = empty_backup(1, sample_case(Uuid::new_v4().to_string()));
+        assert!(validate_backup(&valid).is_ok());
+
+        let invalid = empty_backup(1, sample_case("../../outside".to_string()));
+        assert!(validate_backup(&invalid).is_err());
+    }
+
+    #[test]
+    fn backup_document_paths_are_reduced_to_a_single_managed_name() {
+        let document = Document {
+            id: Uuid::new_v4().to_string(),
+            case_id: Uuid::new_v4().to_string(),
+            category: "evidence".to_string(),
+            filename: "原始名称.txt".to_string(),
+            filepath: "/untrusted/absolute/imported_name.txt".to_string(),
+            file_type: Some("txt".to_string()),
+            file_size: None,
+            tags: None,
+            notes: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        assert_eq!(
+            backup_document_name(&document).unwrap(),
+            "imported_name.txt"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_path_check_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("legaldesk-path-test-{}", Uuid::new_v4()));
+        let managed = root.join("managed");
+        let outside = root.join("outside");
+        fs::create_dir_all(&managed).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(managed.join("inside.txt"), b"inside").unwrap();
+        fs::write(outside.join("secret.txt"), b"outside").unwrap();
+        symlink(outside.join("secret.txt"), managed.join("escape.txt")).unwrap();
+
+        assert!(canonical_managed_path(&managed.join("inside.txt"), &managed).is_ok());
+        assert!(canonical_managed_path(&managed.join("escape.txt"), &managed).is_err());
+
+        fs::remove_dir_all(&root).unwrap();
+    }
 }

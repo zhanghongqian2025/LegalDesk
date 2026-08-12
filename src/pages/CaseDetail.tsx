@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store';
 import { DOCUMENT_CATEGORY_LABELS, type CreateCaseInput } from '../types';
-import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, Send, X, Upload, ExternalLink, Sparkles } from 'lucide-react';
+import { ArrowLeft, FileText, FolderOpen, Scale, Plus, Trash2, Save, Edit, X, Upload, ExternalLink, Bot } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { open as openPath } from '@tauri-apps/plugin-shell';
+import { openPath } from '@tauri-apps/plugin-opener';
 import { DocumentWizard } from '../components/DocumentWizard';
+import { AgentPanel } from '../components/AgentPanel';
 
-type TabType = 'documents' | 'legal' | 'evidence' | 'ai';
+type TabType = 'documents' | 'legal' | 'evidence' | 'agents';
 
 export function CaseDetail() {
   const {
@@ -14,7 +15,6 @@ export function CaseDetail() {
     selectCase, updateCase, importFileToCase, deleteDocument,
     saveLegalDocument, deleteLegalDocument,
     addEvidence, deleteEvidence,
-    addAiMessage, aiMessages, clearAiMessages,
   } = useAppStore();
 
   const [activeTab, setActiveTab] = useState<TabType>('documents');
@@ -43,10 +43,6 @@ export function CaseDetail() {
   const [evidenceForm, setEvidenceForm] = useState({
     name: '', evidenceType: '', authenticity: '', legality: '', relevance: '', analysis: ''
   });
-
-  const [aiInput, setAiInput] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [analyzingEvidence, setAnalyzingEvidence] = useState(false);
 
   const selectedCase = cases.find((c) => c.id === selectedCaseId);
 
@@ -130,144 +126,6 @@ export function CaseDetail() {
     setEvidenceForm({ name: '', evidenceType: '', authenticity: '', legality: '', relevance: '', analysis: '' });
   };
 
-  const handleAiAnalyzeEvidence = async () => {
-    if (!evidenceForm.name.trim() || analyzingEvidence) return;
-    setAnalyzingEvidence(true);
-    
-    const apiKey = localStorage.getItem('ai_api_key');
-    const apiUrl = localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1';
-    const model = localStorage.getItem('ai_model') || 'gpt-4o-mini';
-    const caseInfo = selectedCase ? `${selectedCase.title}${selectedCase.case_number ? `（${selectedCase.case_number}）` : ''}` : '';
-
-    if (apiKey) {
-      try {
-        const systemPrompt = `你是一位专业的法律证据分析AI助手。请根据证据名称，分析其三性（真实性、合法性、关联性）。
-请以JSON格式返回分析结果：
-{
-  "evidenceType": "物证/书证/证人证言/间接证据"（根据名称推断）,
-  "authenticity": "verified/unverified/disputed"（真实性：已核实/未核实/有争议）,
-  "legality": "legal/illegal/questionable"（合法性：合法/非法/存疑）,
-  "relevance": "relevant/irrelevant/questionable"（关联性：有关联/无关联/存疑）,
-  "analysis": "简要分析说明（50字以内）"
-}
-只返回JSON，不要有其他文字。`;
-
-        const response = await fetch(`${apiUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: `案件：${caseInfo}\n证据名称：${evidenceForm.name}` },
-            ],
-            max_tokens: 500,
-            temperature: 0.3,
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const raw = data.choices?.[0]?.message?.content || '';
-          const jsonMatch = raw.match(/\{[\s\S]*?\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            const typeMap: Record<string, string> = {
-              '物证': 'physical', '书证': 'documentary', '证人证言': 'testimonial', '间接证据': 'circumstantial',
-            };
-            const authMap: Record<string, string> = {
-              '已核实': 'verified', '未核实': 'unverified', '有争议': 'disputed',
-            };
-            const legMap: Record<string, string> = {
-              '合法': 'legal', '非法': 'illegal', '存疑': 'questionable',
-            };
-            const relMap: Record<string, string> = {
-              '有关联': 'relevant', '无关联': 'irrelevant', '存疑': 'questionable',
-            };
-            setEvidenceForm(prev => ({
-              ...prev,
-              evidenceType: typeMap[parsed.evidenceType] || prev.evidenceType,
-              authenticity: authMap[parsed.authenticity] || prev.authenticity,
-              legality: legMap[parsed.legality] || prev.legality,
-              relevance: relMap[parsed.relevance] || prev.relevance,
-              analysis: parsed.analysis || prev.analysis,
-            }));
-          }
-        }
-      } catch (error) {
-        console.error('AI evidence analysis error:', error);
-      }
-    }
-    setAnalyzingEvidence(false);
-  };
-
-  const handleAiSubmit = async () => {
-    if (!aiInput.trim() || aiLoading) return;
-    const userMsg = aiInput;
-    addAiMessage('user', userMsg);
-    setAiInput('');
-    setAiLoading(true);
-
-    const caseInfo = selectedCase ? `${selectedCase.title}${selectedCase.case_number ? `（${selectedCase.case_number}）` : ''}` : '';
-    const docInfo = legalDocuments.length > 0 ? `\n📄 法律文书：${legalDocuments.length}份` : '';
-    const evidenceInfo = evidence.length > 0 ? `\n🔍 证据材料：${evidence.length}份` : '';
-
-    // Build context
-    const context = `当前案件信息：${caseInfo}${docInfo}${evidenceInfo}`;
-    
-    // Check if AI is configured
-    const apiKey = localStorage.getItem('ai_api_key');
-    const apiUrl = localStorage.getItem('ai_api_url') || 'https://api.openai.com/v1';
-    const model = localStorage.getItem('ai_model') || 'gpt-4o-mini';
-
-    if (apiKey) {
-      try {
-        const systemPrompt = `你是一位专业的法律AI助手，帮助律师和法务人员处理案件。你的职责包括：
-1. 起草法律文书（起诉状、答辩状、代理词等）
-2. 分析证据的三性（真实性、合法性、关联性）
-3. 提供法律咨询和建议
-4. 整理和归纳案件材料
-
-请用专业、严谨的语气回答问题。如果涉及具体法律建议，请注明仅供参考。`;
-
-        const response = await fetch(`${apiUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: `${context}\n\n用户问题：${userMsg}` },
-            ],
-            max_tokens: 2000,
-            temperature: 0.7,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const assistantMsg = data.choices?.[0]?.message?.content || '抱歉，AI 暂时无法回答这个问题。';
-        addAiMessage('assistant', assistantMsg);
-      } catch (error) {
-        console.error('AI API error:', error);
-        addAiMessage('assistant', `抱歉，AI 服务调用失败：${error instanceof Error ? error.message : '未知错误'}。请检查设置中的 API 配置是否正确。`);
-      }
-    } else {
-      // Fallback when no API key
-      addAiMessage('assistant', `收到你的问题：${userMsg}\n\n当前案件：${caseInfo}${docInfo}${evidenceInfo}\n\n我可以帮你：\n📝 起草法律文书\n🔍 分析证据三性\n⚖️ 法律咨询\n\n请告诉我具体需求？\n\n💡 提示：在设置中配置 API Key 后，我将能够提供更准确的法律建议。`);
-    }
-    setAiLoading(false);
-  };
-
   if (!selectedCase) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -280,7 +138,7 @@ export function CaseDetail() {
     { id: 'documents', label: '卷宗材料', count: documents.length },
     { id: 'legal', label: '法律文书', count: legalDocuments.length },
     { id: 'evidence', label: '证据审核', count: evidence.length },
-    { id: 'ai', label: 'AI 助手' },
+    { id: 'agents', label: '智能体协同' },
   ];
 
   return (
@@ -571,9 +429,15 @@ export function CaseDetail() {
                     />
                   </div>
                   <div className="col-span-2 flex gap-3">
-                    <button onClick={handleAiAnalyzeEvidence} disabled={analyzingEvidence || !evidenceForm.name.trim()} className="btn btn-secondary flex items-center gap-2">
-                      <Sparkles size={16} />
-                      {analyzingEvidence ? 'AI 分析中...' : 'AI 分析'}
+                    <button
+                      onClick={() => {
+                        setShowEvidenceForm(false);
+                        setActiveTab('agents');
+                      }}
+                      className="btn btn-secondary flex items-center gap-2"
+                    >
+                      <Bot size={16} />
+                      使用证据审查智能体
                     </button>
                     <button onClick={handleSaveEvidence} className="btn btn-primary">保存</button>
                     <button onClick={() => setShowEvidenceForm(false)} className="btn btn-secondary">取消</button>
@@ -627,70 +491,8 @@ export function CaseDetail() {
           </div>
         )}
 
-        {/* AI tab */}
-        {activeTab === 'ai' && (
-          <div className="h-full flex flex-col">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-lg font-semibold">AI 助手</h2>
-                <p className="text-gray-500 text-sm mt-1">智能辅助法律工作</p>
-              </div>
-              <button onClick={clearAiMessages} className="text-sm text-gray-500 hover:text-gray-700">清空对话</button>
-            </div>
-            
-            <div className="flex-1 overflow-auto card p-4 mb-4 bg-white">
-              {aiMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center py-12">
-                  <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center mb-4">
-                    <Edit size={32} className="text-blue-500" />
-                  </div>
-                  <p className="text-gray-600 text-lg mb-2">法律 AI 助手</p>
-                  <p className="text-gray-400 text-sm max-w-md">我可以帮你起草法律文书、分析证据三性、整理卷宗材料、解答法律问题</p>
-                  <div className="grid grid-cols-2 gap-4 mt-6 text-left text-sm text-gray-500">
-                    <div className="flex items-center gap-2">📝 起草法律文书</div>
-                    <div className="flex items-center gap-2">🔍 分析证据三性</div>
-                    <div className="flex items-center gap-2">📁 整理卷宗材料</div>
-                    <div className="flex items-center gap-2">⚖️ 法律咨询解答</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {aiMessages.map((msg, i) => (
-                    <div key={i} className={msg.role === 'user' ? 'chat-user' : 'chat-assistant'}>
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
-                    </div>
-                  ))}
-                  {aiLoading && (
-                    <div className="chat-assistant">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={aiInput}
-                onChange={(e) => setAiInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleAiSubmit()}
-                placeholder="输入你的问题或需求..."
-                className="input flex-1"
-              />
-              <button 
-                onClick={handleAiSubmit} 
-                disabled={aiLoading || !aiInput.trim()}
-                className="btn btn-primary px-6"
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </div>
+        {activeTab === 'agents' && selectedCaseId && (
+          <AgentPanel caseId={selectedCaseId} documents={documents} />
         )}
       </div>
 

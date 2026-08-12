@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "runtime": {
+    "provider": "Pi Agent Harness",
+    "requiredVersion": "0.84.1"
+  },
+  "agents": [
+    {
+      "id": "matter-organizer",
+      "name": "材料整理智能体",
+      "summary": "梳理选定材料的事实、时间线、主体与待补材料。",
+      "outcome": "材料摘要、事实时间线、缺失项清单",
+      "permissions": ["case:read", "documents:selected:read", "artifact:draft"],
+      "prompt": "请基于当前事项信息与用户明确选定的材料进行整理。输出：一、材料清单；二、已确认事实；三、按日期排序的时间线；四、主体及其关系；五、信息冲突与待核实项；六、建议补充的材料。每项结论标注所依据的文件名；无法从材料确认的内容必须明确写为待核实，不得补造事实。"
+    },
+    {
+      "id": "evidence-reviewer",
+      "name": "证据审查智能体",
+      "summary": "围绕证明目的审查真实性、合法性、关联性及争议点。",
+      "outcome": "三性审查草稿、争议点、补强建议",
+      "permissions": ["case:read", "documents:selected:read", "artifact:draft"],
+      "prompt": "请对用户明确选定的材料进行证据审查。逐项输出：证据名称、拟证明目的、真实性、合法性、关联性、可能的质证意见、证据链位置与补强建议。引用具体文件名区分事实与推断；没有依据时写明无法判断。该输出是供法律专业人员复核的工作草稿，不得表述为最终法律结论。"
+    },
+    {
+      "id": "document-drafter",
+      "name": "文书起草智能体",
+      "summary": "根据事项背景、选定材料和用户要求形成可复核文书草稿。",
+      "outcome": "结构化文书草稿、引用依据、待确认变量",
+      "permissions": ["case:read", "documents:selected:read", "artifact:draft"],
+      "prompt": "请根据当前事项信息、用户要求及明确选定的材料起草法律工作文书。先列出文书类型与结构，再提供草稿正文，最后单列材料依据、待确认变量和风险提示。不得虚构案号、主体、日期、金额、法条或裁判观点；无法确认的字段使用清晰占位符。输出仅作为待复核草稿。"
+    }
+  ]
+}
