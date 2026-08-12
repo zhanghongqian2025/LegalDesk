@@ -67,7 +67,9 @@ LegalDesk/
 │   ├── PRODUCT.md          # 产品范围与路线
 │   ├── TECHNICAL.md        # 技术架构
 │   ├── PI_INTEGRATION.md   # Pi 适配、安全边界与升级策略
-│   └── USER_MANUAL.md      # 用户操作说明
+│   ├── USER_MANUAL.md      # 用户操作说明
+│   ├── DEVELOPMENT_LOG_2026-08-13.md # 本次开发、安全和模型接入复核
+│   └── code-walkthrough/   # 按文件、行号范围编写的全仓代码讲解
 ├── SPEC.md                 # MVP 验收规格
 └── .github/workflows/ci.yml
 ```
@@ -79,6 +81,8 @@ LegalDesk/
 - [Pi 集成设计](./docs/PI_INTEGRATION.md)
 - [用户手册](./docs/USER_MANUAL.md)
 - [安全政策](./SECURITY.md)
+- [2026-08-13 开发与复核记录](./docs/DEVELOPMENT_LOG_2026-08-13.md)
+- [全仓代码讲解](./docs/code-walkthrough/README.md)
 
 ## 状态说明
 
