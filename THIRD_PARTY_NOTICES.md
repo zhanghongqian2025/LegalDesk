@@ -1,24 +1,29 @@
 # Third-Party Notices
 
-LegalDesk depends on third-party open-source software. The dependency manifests and lock files are the authoritative inventory for a particular build; deployers should generate and review a software bill of materials before production distribution.
+LegalDesk is built on DeepSeek Harness and its transitive open-source dependencies. DeepSeek Harness is licensed under the MIT License; its own repository and release artifacts contain the authoritative dependency notices for the pinned build.
 
-## Pi
-
-- Project: Pi Agent
-- Upstream: https://github.com/earendil-works/pi
-- Package used by the integration: `@earendil-works/pi-coding-agent`
-- Compatible version for LegalDesk 0.2: `0.84.1`
+- Project: DeepSeek Harness
+- Upstream: https://github.com/deepseek-ai/deepseek-harness
 - License: MIT License
+- Integration: out-of-tree Bundle, Host plugins, Client plugins, and profile overlays; no core fork
 
-Pi is not copied or forked into this repository. LegalDesk invokes a user- or administrator-installed Pi runtime through an adapter. Pi remains the copyright of its respective contributors and is provided under its own MIT license and notices.
+The installable desktop distribution embeds Electron and its Chromium/Node.js runtime under their respective open-source licenses. Electron's license and Chromium notices are included in the packaged application resources.
 
-## Other dependencies
+- Project: Electron
+- Upstream: https://github.com/electron/electron
+- License: MIT License, with bundled third-party notices
+- Integration: LegalDesk-owned desktop host that starts the pinned Harness runtime on loopback
 
-LegalDesk also uses Tauri, React, Rust crates, npm packages, SQLite/rusqlite and related transitive dependencies under their respective licenses. Nothing in the LegalDesk MIT License replaces or limits those third-party terms.
+LegalDesk uses `dsh-doc` and its pinned Xberg engine for local, byte-snapshot document extraction. LegalDesk does not enable its model tools or remote URL conversion; extracted text is stored as a separate derived file under the same matter boundary.
 
-Before distributing an application bundle:
+- Project: dsh-doc
+- Upstream: https://github.com/Sqhao-O/dsh-docs
+- License: MIT License
+- Pinned version: 0.1.1
 
-1. Build from the reviewed lock files.
-2. Produce a complete dependency and license report for that build.
-3. Include all notices required by the resolved versions.
-4. Verify that optional model providers, local models, templates, extensions and legal datasets have separate compatible terms.
+- Project: Xberg
+- Upstream: https://www.npmjs.com/package/@xberg-io/xberg
+- License: see the pinned package license
+- Pinned version: 1.0.14
+
+Model providers, legal datasets, extraction engines, templates, and optional plugins have separate terms. Before distribution, pin the reviewed Harness revision, generate an SBOM and complete license report, include required notices, and review every optional provider and dataset independently.

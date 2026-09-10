@@ -1,0 +1,46 @@
+{
+  "name": "@civright/legaldesk-harness",
+  "version": "0.3.0",
+  "description": "LegalDesk safety policy and legal-agent catalog for DeepSeek Harness",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./agents": "./lib/agent-catalog.js",
+    "./matter-boundary": "./lib/matter-boundary.js",
+    "./prompt": "./lib/prompt.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "enforcement.patch.yml",
+    "lib/client.js",
+    "lib/*.js",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "build:client": "tsc -p tsconfig.client.json && tsdown --config tsdown.config.ts --env.DSH_BUILD_FACE=client",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "dsh-doc": "0.1.1"
+  }
+}

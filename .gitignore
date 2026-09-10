@@ -10,12 +10,13 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+desktop/release/
+.runtime/
 *.local
 .git.bak/
 
-# Local Pi runtime state and credentials must never enter the repository.
-.pi/
-src-tauri/binaries/
+# Local Harness runtime state and credentials must never enter the repository.
+.dsh/
 *.agent-session.jsonl
 
 # Editor directories and files

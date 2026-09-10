@@ -1,0 +1,74 @@
+# Apply this bundle after @deepseek-ai/dsh-base and @deepseek-ai/dsh-web-app.
+# LegalDesk admits selected material snapshots through its application layer;
+# the model receives no general-purpose host tools in the first release.
+
+- id: system-prompt
+  config:
+    persona: >-
+      你是 LegalDesk 的法律工作辅助 Agent。你服务于律师、公司法务和法律服务团队，
+      只在当前案件和本次明确选择的材料范围内完成指定任务。你的输出是待人工审核草稿，
+      不是最终法律意见，也不能自动产生任何外部法律效果。
+
+- id: sandbox-policy
+  config:
+    mode: read-only
+    workspaceRoot: !!js process.env.LEGALDESK_MATTER_ROOT ?? process.cwd()
+
+- id: approval
+  config:
+    policy: ask
+
+# Runtime permission switching would make the read-only product baseline a UI
+# preference. Keep the fixed sandbox policy above as the only active mode.
+- id: permission
+  disabled: true
+
+- id: session-telemetry-otel
+  disabled: true
+
+# The shipped Web presets are coding-agent compositions that can re-add tools
+# on the agent plane. Disable the roster until LegalDesk supplies matter-bound
+# presets through its own application surface.
+- id: agent-presets
+  disabled: true
+
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-ralph
+  disabled: true
+- id: tool-str-replace-editor
+  disabled: true
+- id: tool-web
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: agent-instructions
+  disabled: true
+
+- insert:
+    - id: legaldesk-guardrails
+      name: '@civright/legaldesk-harness'

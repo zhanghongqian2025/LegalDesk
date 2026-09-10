@@ -1,33 +1,30 @@
 {
-  "name": "legaldesk",
+  "name": "legaldesk-harness-workbench",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "workspaces": [
+    "harness/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-dialog": "^2.6.0",
-    "@tauri-apps/plugin-opener": "^2",
-    "lucide-react": "^0.577.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "zustand": "^5.0.11"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.0",
-    "@tauri-apps/cli": "^2",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
-    "autoprefixer": "^10.5.0",
-    "postcss": "^8.5.8",
-    "tailwindcss": "^4.3.0",
-    "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "build": "npm run build:client && npm test",
+    "test": "npm run test:harness && npm run verify",
+    "test:harness": "node --test harness/legaldesk-harness/tests/*.test.js",
+    "build:client": "node scripts/build-legaldesk-client.mjs",
+    "verify": "node scripts/verify-repository.mjs",
+    "pack:harness": "npm pack --dry-run --workspace=false ./harness/legaldesk-harness",
+    "dsh:setup": "node scripts/legaldesk-dsh.mjs --setup-only",
+    "dsh:dump": "node scripts/legaldesk-dsh.mjs --dump-config",
+    "dsh:dev": "node scripts/legaldesk-dsh.mjs --no-open",
+    "release": "node scripts/build-release.mjs",
+    "desktop:install": "pnpm --dir desktop install --ignore-scripts && node desktop/node_modules/electron/install.js",
+    "desktop:dev": "npm run build:client && npm run start --prefix desktop",
+    "desktop:pack": "npm run build:client && npm run pack --prefix desktop",
+    "desktop:mac": "npm run build:client && npm run dist:mac --prefix desktop",
+    "desktop:win": "npm run build:client && npm run dist:win --prefix desktop",
+    "desktop:smoke": "npm run smoke:packaged --prefix desktop"
   }
 }

@@ -1,0 +1,70 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - name: Build LegalDesk Harness client
+        run: node scripts/build-legaldesk-client.mjs
+      - name: Install pinned desktop dependencies
+        run: pnpm --dir desktop install --frozen-lockfile --ignore-scripts
+      - name: Install Electron runtime
+        run: node desktop/node_modules/electron/install.js
+      - name: Build macOS installers
+        run: pnpm --dir desktop run dist:mac
+      - name: Smoke packaged application
+        run: pnpm --dir desktop run smoke:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legaldesk-macos
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.pkg
+            desktop/release/*.zip
+            desktop/release/SHA256SUMS
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - name: Build LegalDesk Harness client
+        run: node scripts/build-legaldesk-client.mjs
+      - name: Install pinned desktop dependencies
+        run: pnpm --dir desktop install --frozen-lockfile --ignore-scripts
+      - name: Install Electron runtime
+        run: node desktop/node_modules/electron/install.js
+      - name: Build Windows installer
+        run: pnpm --dir desktop run dist:win
+      - name: Smoke packaged application
+        run: pnpm --dir desktop run smoke:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: legaldesk-windows
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.zip
+            desktop/release/SHA256SUMS

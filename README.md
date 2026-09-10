@@ -1,93 +1,63 @@
 # LegalDesk
 
-桌面级法律工作平台：以案件和卷宗为中心，让法律工作者在本地完成材料整理、证据审阅与文书起草，并通过受控的智能体协作提升效率。
+LegalDesk 是面向律师、公司法务和法律服务团队的单机法律 Agent 工作台。仓库从 `0.3.0` 起以 DeepSeek Harness 为唯一 Agent 与前端运行基础；旧 React/Vite/Tauri/Pi 实现已经移除。
 
-> 当前处于 `0.2.0` 开发阶段。智能体输出只作为工作草稿和审阅线索，不能替代律师的专业判断；任何对外提交、签署或发送的内容都必须由有权限的人员最终审核。
+## 当前状态
 
-## 产品定位
+当前已交付一个可验收的插件化纵向闭环：
 
-LegalDesk 面向律师、公司法务与法律服务团队，采用 Tauri 桌面壳、React 工作台、Rust 本地服务和 SQLite 数据库。默认本地优先，也可在机构网络和合规基础设施中私有部署。
+- DeepSeek Harness 双端插件（Host + `dsh.client`），不修改 Harness 核心；
+- SQLite 案件库和本地受管材料目录；
+- 材料导入、显式选择、SHA-256 校验和不可变快照；
+- 材料整理、证据审查、法律文书三个可视化 Agent 入口；
+- Legal Run 与唯一 Harness Session ID 持久关联；
+- Agent 输出自动形成待审核草稿，支持人工批准或退回；
+- 通过 Harness Slot 注入的法律工作台 Client UI；
+- 只读、无模型工具、人工审核和本地审计的安全基线；
+- 本地 Harness Profile 安装、配置检查和开发启动器。
 
-- 案件、卷宗与智能体运行记录由桌面应用统一管理。
-- 默认不把案件材料上传到 LegalDesk 自建云端；模型服务是否联网及数据流向取决于用户配置的 Pi 模型提供方。
-- LegalDesk 只读取用户选中的受管文本材料并生成受限快照；Pi 首期以零工具模式运行，不能自行访问文件、shell 或任意目录。
-- 每份智能体产物先进入“待人工审核”状态，人工确认后才能进入正式工作成果。
+仓库中不存在可回退继续开发的旧 Tauri/Pi 运行链。PDF/OCR 正文抽取、备份恢复和机构权限仍属于后续阶段。
 
-## 首期智能体
+## 运行要求
 
-| 智能体 | 输入 | 产物 |
-|---|---|---|
-| 材料整理智能体 | 用户选定的案件文件 | 文件分类建议、材料缺口和待核验项 |
-| 证据审阅智能体 | 用户选定的证据材料 | 真实性、合法性、关联性审阅线索及风险提示 |
-| 文书起草智能体 | 案件信息、用户指令和选定材料 | 标明待核事实与引用依据的文书草稿 |
+- Node.js `>=22.19.0`；
+- pnpm；
+- 已安装或位于相邻目录的 DeepSeek Harness 源码；
+- 运行模型时，由 Harness 管理的 DeepSeek 模型凭据。
 
-## Pi 集成策略
+默认查找 `/Users/zhanghongqian/Desktop/deepseek-harness` 的相邻 checkout；也可设置 `DEEPSEEK_HARNESS_DIR`。本地 Profile 默认写入 `.runtime/dsh`，案件库与材料默认写入 `.runtime/legaldesk-data`；分别可用 `LEGALDESK_DSH_HOME` 和 `LEGALDESK_DATA_DIR` 覆盖。
 
-LegalDesk 使用 [Pi](https://github.com/earendil-works/pi) 作为智能体核心，并坚持 **Pi 核心零 fork**：不复制或修改上游核心代码，只通过 Pi 的 RPC/SDK 能力建立薄适配层。这样可以让法律领域能力留在 LegalDesk 的智能体定义、提示词、审计和权限边界中，减少二次开发和长期合并成本。
-
-当前集成精确锁定 `@earendil-works/pi-coding-agent@0.84.1`。开发版暂不自动下载或静默安装 Pi；需要用户显式安装这个版本，并由 LegalDesk 在运行前检查版本。详细说明见 [Pi 集成设计](./docs/PI_INTEGRATION.md)。
-
-## 本地开发
-
-### 环境要求
-
-- Node.js 20+
-- npm 10+
-- Rust 1.85+
-- Tauri 2 支持的系统依赖
-- 可选：需要运行智能体时，显式安装 Pi `0.84.1`
-
-```bash
-git clone https://github.com/zhanghongqian2025/LegalDesk.git
-cd LegalDesk
-
-# 禁止依赖生命周期脚本，降低供应链风险
-npm ci --ignore-scripts
-
-# 前端构建
-npm run build
-
-# Rust 检查
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-
-# 桌面开发模式
-npm run tauri dev
+```sh
+npm test
+npm run build:client
+npm run pack:harness
+npm run release
+npm run dsh:setup
+npm run dsh:dump
+npm run dsh:dev
 ```
 
-不要在未审阅 `package.json` 和锁文件的情况下移除 `--ignore-scripts`。安全报告和供应链规则见 [SECURITY.md](./SECURITY.md)。
+`dsh:dev` 始终加载 [enforcement.patch.yml](./harness/legaldesk-harness/enforcement.patch.yml)，不允许普通 Profile 配置降低只读和无工具基线。真实模型调用仍可能把用户明确选择的材料发送给配置的模型提供方；“单机运行”不等于“模型必然离线”。
 
-## 项目结构
+`npm run release` 会执行生产构建与测试，固定当前已审核的 DeepSeek Harness 提交，生成插件 tarball、SHA-256 校验文件、SPDX 清单、第三方许可证和单机发行启动器。发行物写入 `dist/releases/`，不包含 `.runtime`、案件数据或模型凭据。
+
+普通用户桌面发行使用 `npm run desktop:mac` 生成 macOS DMG/PKG，Windows NSIS 安装包由 `desktop-release.yml` 在 Windows Runner 上生成。桌面版内置官方 Harness npm Runtime，无需用户安装 Node.js 或 pnpm；安装、图标启动、数据保留式卸载说明见 [桌面发行文档](./docs/DESKTOP_DISTRIBUTION.md)。
+
+## 仓库结构
 
 ```text
-LegalDesk/
-├── src/                    # React 工作台与智能体 UI
-├── src-tauri/              # Rust/Tauri、本地数据库与 Pi 进程适配
-├── docs/
-│   ├── PRODUCT.md          # 产品范围与路线
-│   ├── TECHNICAL.md        # 技术架构
-│   ├── PI_INTEGRATION.md   # Pi 适配、安全边界与升级策略
-│   ├── USER_MANUAL.md      # 用户操作说明
-│   ├── DEVELOPMENT_LOG_2026-08-13.md # 本次开发、安全和模型接入复核
-│   └── code-walkthrough/   # 按文件、行号范围编写的全仓代码讲解
-├── SPEC.md                 # MVP 验收规格
-└── .github/workflows/ci.yml
+harness/legaldesk-harness/   Host/Client 插件、SQLite、材料、运行、产物与安全策略
+harness/legaldesk-client/    Client 插件实现位置说明
+scripts/                     本地 Profile 启动与仓库不变量检查
+docs/                        产品、功能、架构和重构决策
 ```
 
-## 文档
+## 产品边界
 
-- [产品规格](./docs/PRODUCT.md)
-- [技术规格](./docs/TECHNICAL.md)
-- [Pi 集成设计](./docs/PI_INTEGRATION.md)
-- [用户手册](./docs/USER_MANUAL.md)
-- [安全政策](./SECURITY.md)
-- [2026-08-13 开发与复核记录](./docs/DEVELOPMENT_LOG_2026-08-13.md)
-- [全仓代码讲解](./docs/code-walkthrough/README.md)
+- 案件是材料、会话、运行和产物的强制边界。
+- 模型只接收本次明确选择且经过校验的材料快照。
+- 所有模型产物默认是待人工审核草稿。
+- 不提供公共法律咨询，不自动发送、签署或提交法律文件。
+- 不默认开放 shell、任意文件、联网检索、技能、工作流或子 Agent。
 
-## 状态说明
-
-仓库当前版本用于验证桌面案件工作台与 Pi 最小集成闭环。团队协作、机构级身份权限、静态加密、完整法律检索和正式生产发布仍属于后续工作，不应从界面原型推断为已经完成。
-
-## 许可证
-
-LegalDesk 采用 [MIT License](./LICENSE)。Pi 也是 MIT 许可的软件，相关声明见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+详细要求见 [SPEC.md](./SPEC.md)、[功能清单](./docs/REBUILD_FUNCTIONS.md)、[架构](./docs/ARCHITECTURE.md) 和 [安全策略](./SECURITY.md)。
